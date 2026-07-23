@@ -1,0 +1,152 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: Inter, system-ui, sans-serif;
+  background: #f4f7f5;
+  color: #1f2933;
+}
+
+.app {
+  min-height: 100vh;
+}
+
+.header {
+  padding: 32px 48px;
+  border-bottom: 1px solid #dce5df;
+  background: white;
+}
+
+.header h1 {
+  margin: 0;
+  font-size: 32px;
+}
+
+.header p {
+  margin-top: 6px;
+  color: #6b7280;
+}
+
+.recorder-container {
+  min-height: calc(100vh - 120px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 24px;
+}
+
+.recording-circle {
+  width: 150px;
+  height: 150px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #e4eee7;
+  transition: all 0.3s ease;
+}
+
+.recording-circle.recording {
+  animation: pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+  0% {
+    transform: scale(1);
+  }
+
+  50% {
+    transform: scale(1.08);
+  }
+
+  100% {
+    transform: scale(1);
+  }
+}
+
+.timer {
+  font-size: 42px;
+  font-weight: 600;
+  letter-spacing: 2px;
+}
+
+button {
+  border: none;
+  cursor: pointer;
+  padding: 14px 22px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.record-button {
+  background: #1f6f43;
+  color: white;
+}
+
+.stop-button {
+  background: #b42318;
+  color: white;
+}
+
+.audio-preview {
+  width: min(500px, 90%);
+  padding: 24px;
+  border-radius: 16px;
+  background: white;
+  border: 1px solid #dce5df;
+}
+
+.audio-preview h2 {
+  margin-top: 0;
+}
+
+.audio-preview audio {
+  width: 100%;
+}
+
+.delete-button {
+  margin-top: 16px;
+  background: #f1f3f4;
+  color: #333;
+}
+.upload-button {
+  margin-top: 16px;
+  width: 100%;
+  justify-content: center;
+  background: #1f6f43;
+  color: white;
+}
+
+.delete-button {
+  width: 100%;
+  justify-content: center;
+  margin-top: 12px;
+}
+.language-selector {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(300px, 90%);
+}
+
+.language-selector label {
+  font-size: 14px;
+  font-weight: 600;
+  color: #4b5563;
+}
+
+.language-selector select {
+  padding: 12px 14px;
+  border: 1px solid #dce5df;
+  border-radius: 10px;
+  background: white;
+  font-size: 16px;
+  cursor: pointer;
+}

@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environment
+venv/
+.venv/
+env/
+
+# Environment variables
+.env
+.env.*
+
+# Audio uploads
+uploads/
+*.webm
+*.wav
+*.mp3
+*.m4a
+*.ogg
+
+# Database
+*.db
+*.sqlite3
+
+# Node
+node_modules/
+dist/
+build/
+
+# Logs
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
