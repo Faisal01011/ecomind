@@ -7,11 +7,6 @@ import {
   ChevronDown,
   Leaf,
   X,
-  Sparkles,
-  CheckSquare,
-  Lightbulb,
-  Users,
-  FolderKanban,
 } from "lucide-react";
 import "./App.css";
 
@@ -31,81 +26,317 @@ const LANGUAGES = [
   { value: "de", label: "German" },
 ];
 
-type MemoryData = {
-  summary: string | null;
-  topics: string[];
-  ideas: string[];
-  tasks: string[];
-  people: string[];
-  projects: string[];
-};
+interface VoiceNote {
+  id: number;
+  filename: string;
+  audio_path: string;
+  language: string;
+  transcription: string;
+  summary: string;
+  topics: string[] | null;
+  ideas: string[] | null;
+  tasks: string[] | null;
+  people: string[] | null;
+  projects: string[] | null;
+  created_at: string;
+}
 
 function App() {
   const [isRecording, setIsRecording] = useState(false);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [transcription, setTranscription] = useState<string | null>(null);
+  const [summary, setSummary] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [language, setLanguage] = useState("en");
   const [recordingTime, setRecordingTime] = useState(0);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  const [memory, setMemory] = useState<MemoryData>({
-    summary: null,
-    topics: [],
-    ideas: [],
-    tasks: [],
-    people: [],
-    projects: [],
-  });
+  const [memories, setMemories] = useState<VoiceNote[]>([]);
+  const [isLoadingMemories, setIsLoadingMemories] = useState(true);
 
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const audioChunksRef = useRef<Blob[]>([]);
-  const timerRef = useRef<number | null>(null);
+  const [selectedMemory, setSelectedMemory] =
+    useState<VoiceNote | null>(null);
 
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const analyserRef = useRef<AnalyserNode | null>(null);
-  const dataArrayRef = useRef<Uint8Array<ArrayBuffer> | null>(null);
-  const petalRefs = useRef<(HTMLDivElement | null)[]>([]);
-  const ringRef = useRef<HTMLDivElement | null>(null);
-  const coreRef = useRef<HTMLButtonElement | null>(null);
-  const rotationRef = useRef(0);
-  const rafRef = useRef<number | null>(null);
+  const [memoryToDelete, setMemoryToDelete] =
+    useState<VoiceNote | null>(null);
+
+  const [searchQuery, setSearchQuery] = useState("");
+  const [showTasksOnly, setShowTasksOnly] = useState(false);
+
+  const mediaRecorderRef =
+    useRef<MediaRecorder | null>(null);
+
+  const audioChunksRef =
+    useRef<Blob[]>([]);
+
+  const timerRef =
+    useRef<number | null>(null);
+
+  const audioContextRef =
+    useRef<AudioContext | null>(null);
+
+  const analyserRef =
+    useRef<AnalyserNode | null>(null);
+
+  const dataArrayRef =
+    useRef<Uint8Array<ArrayBuffer> | null>(null);
+
+  const petalRefs =
+    useRef<(HTMLDivElement | null)[]>([]);
+
+  const ringRef =
+    useRef<HTMLDivElement | null>(null);
+
+  const coreRef =
+    useRef<HTMLButtonElement | null>(null);
+
+  const rotationRef =
+    useRef(0);
+
+  const rafRef =
+    useRef<number | null>(null);
+
+  // --------------------------------------------------
+  // LOAD SAVED MEMORIES
+  // --------------------------------------------------
+
+  const fetchMemories = async () => {
+    try {
+      setIsLoadingMemories(true);
+
+      const response = await fetch(
+        "http://127.0.0.1:8000/api/v1/voice-notes"
+      );
+
+      if (!response.ok) {
+        throw new Error("Failed to fetch memories");
+      }
+
+      const data = await response.json();
+
+      console.log("Fetched memories:", data);
+
+      setMemories(
+        Array.isArray(data)
+          ? data
+          : []
+      );
+
+    } catch (error) {
+      console.error(
+        "Failed to load memories:",
+        error
+      );
+
+      setMemories([]);
+
+    } finally {
+      setIsLoadingMemories(false);
+    }
+  };
+
+  // --------------------------------------------------
+  // DELETE MEMORY
+  // --------------------------------------------------
+
+  const deleteMemory = async (
+    memoryId: number
+  ) => {
+    try {
+      const response =
+        await fetch(
+          `http://127.0.0.1:8000/api/v1/voice-notes/${memoryId}`,
+          {
+            method: "DELETE",
+          }
+        );
+
+      if (!response.ok) {
+        throw new Error(
+          "Failed to delete memory"
+        );
+      }
+
+      setMemories(
+        (currentMemories) =>
+          currentMemories.filter(
+            (memory) =>
+              memory.id !== memoryId
+          )
+      );
+
+      if (
+        selectedMemory?.id === memoryId
+      ) {
+        setSelectedMemory(null);
+      }
+
+      setMemoryToDelete(null);
+
+    } catch (error) {
+      console.error(
+        "Failed to delete memory:",
+        error
+      );
+
+      setErrorMessage(
+        "Could not delete this memory."
+      );
+    }
+  };
+
+  // --------------------------------------------------
+  // LOAD MEMORIES WHEN APP STARTS
+  // --------------------------------------------------
 
   useEffect(() => {
-    const frame = (time: number) => {
-      const analyser = analyserRef.current;
-      const dataArray = dataArrayRef.current;
+    const timer =
+      setTimeout(() => {
+        fetchMemories();
+      }, 0);
+
+    return () =>
+      clearTimeout(timer);
+  }, []);
+
+  // --------------------------------------------------
+  // FILTER MEMORIES
+  // --------------------------------------------------
+
+  const filteredMemories =
+    memories.filter((memory) => {
+      const searchText =
+        searchQuery
+          .toLowerCase()
+          .trim();
+
+      const matchesSearch =
+        searchText === "" ||
+        memory.summary
+          ?.toLowerCase()
+          .includes(searchText) ||
+        memory.transcription
+          ?.toLowerCase()
+          .includes(searchText) ||
+        memory.topics?.some(
+          (topic) =>
+            topic
+              .toLowerCase()
+              .includes(searchText)
+        ) ||
+        memory.tasks?.some(
+          (task) =>
+            task
+              .toLowerCase()
+              .includes(searchText)
+        ) ||
+        memory.ideas?.some(
+          (idea) =>
+            idea
+              .toLowerCase()
+              .includes(searchText)
+        ) ||
+        memory.projects?.some(
+          (project) =>
+            project
+              .toLowerCase()
+              .includes(searchText)
+        );
+
+      const matchesTasks =
+        !showTasksOnly ||
+        (
+          memory.tasks &&
+          memory.tasks.length > 0
+        );
+
+      return (
+        matchesSearch &&
+        matchesTasks
+      );
+    });
+
+  // --------------------------------------------------
+  // VOICE BLOOM ANIMATION
+  // --------------------------------------------------
+
+  useEffect(() => {
+    const frame = (
+      time: number
+    ) => {
+      const analyser =
+        analyserRef.current;
+
+      const dataArray =
+        dataArrayRef.current;
+
       let averageLevel = 0;
 
-      for (let i = 0; i < PETAL_COUNT; i++) {
-        const petal = petalRefs.current[i];
+      for (
+        let i = 0;
+        i < PETAL_COUNT;
+        i++
+      ) {
+        const petal =
+          petalRefs.current[i];
 
         if (!petal) {
           continue;
         }
 
-        const angle = (360 / PETAL_COUNT) * i;
+        const angle =
+          (360 / PETAL_COUNT) * i;
+
         let level: number;
 
-        if (analyser && dataArray) {
-          analyser.getByteFrequencyData(dataArray);
-
-          const bin = Math.floor(
-            (i % (PETAL_COUNT / 2)) * (dataArray.length / (PETAL_COUNT / 2))
+        if (
+          analyser &&
+          dataArray
+        ) {
+          analyser.getByteFrequencyData(
+            dataArray
           );
 
-          level = dataArray[bin] / 255;
+          const bin =
+            Math.floor(
+              (i %
+                (PETAL_COUNT / 2)) *
+                (dataArray.length /
+                  (PETAL_COUNT / 2))
+            );
+
+          level =
+            dataArray[bin] / 255;
+
           averageLevel += level;
+
         } else {
           level =
             0.18 +
-            0.14 * Math.sin(time / 900 + (i / PETAL_COUNT) * Math.PI * 2);
+            0.14 *
+              Math.sin(
+                time / 900 +
+                  (i / PETAL_COUNT) *
+                    Math.PI *
+                    2
+              );
         }
 
-        const extra = analyser ? level * 46 : level * IDLE_AMPLITUDE * 4;
+        const extra =
+          analyser
+            ? level * 46
+            : level *
+              IDLE_AMPLITUDE *
+              4;
 
-        const length = REST_LENGTH + extra;
-        const glow = analyser ? 0.35 + level * 0.65 : 0.3;
+        const length =
+          REST_LENGTH + extra;
+
+        const glow =
+          analyser
+            ? 0.35 +
+              level * 0.65
+            : 0.3;
 
         petal.style.transform = `
           rotate(${angle}deg)
@@ -113,267 +344,493 @@ function App() {
           scaleY(${length / REST_LENGTH})
         `;
 
-        petal.style.opacity = String(glow);
+        petal.style.opacity =
+          String(glow);
       }
 
-      if (analyser && dataArray) {
-        averageLevel = averageLevel / PETAL_COUNT;
-        rotationRef.current += 0.02 + averageLevel * 0.12;
+      if (
+        analyser &&
+        dataArray
+      ) {
+        averageLevel =
+          averageLevel /
+          PETAL_COUNT;
+
+        rotationRef.current +=
+          0.02 +
+          averageLevel *
+            0.12;
+
       } else {
-        rotationRef.current += 0.015;
+        rotationRef.current +=
+          0.015;
       }
 
       if (ringRef.current) {
-        ringRef.current.style.transform = `rotate(${rotationRef.current}deg)`;
+        ringRef.current.style.transform =
+          `rotate(${rotationRef.current}deg)`;
       }
 
       if (coreRef.current) {
-        const pulse = analyser ? 1 + averageLevel * 0.12 : 1 + Math.sin(time / 900) * 0.015;
+        const pulse =
+          analyser
+            ? 1 +
+              averageLevel *
+                0.12
+            : 1 +
+              Math.sin(
+                time / 900
+              ) *
+                0.015;
 
-        coreRef.current.style.setProperty("--pulse", String(pulse));
+        coreRef.current.style.setProperty(
+          "--pulse",
+          String(pulse)
+        );
 
         coreRef.current.style.setProperty(
           "--glow",
-          String(analyser ? 0.4 + averageLevel * 0.9 : 0.25)
+          String(
+            analyser
+              ? 0.4 +
+                averageLevel *
+                  0.9
+              : 0.25
+          )
         );
       }
 
-      rafRef.current = requestAnimationFrame(frame);
+      rafRef.current =
+        requestAnimationFrame(
+          frame
+        );
     };
 
-    rafRef.current = requestAnimationFrame(frame);
+    rafRef.current =
+      requestAnimationFrame(
+        frame
+      );
 
     return () => {
       if (rafRef.current) {
-        cancelAnimationFrame(rafRef.current);
+        cancelAnimationFrame(
+          rafRef.current
+        );
       }
     };
   }, []);
 
-  const startRecording = async () => {
-    try {
-      setErrorMessage(null);
+  // --------------------------------------------------
+  // START RECORDING
+  // --------------------------------------------------
 
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: true,
-      });
+  const startRecording =
+    async () => {
+      try {
+        setErrorMessage(null);
 
-      const audioContext = new AudioContext();
-      const source = audioContext.createMediaStreamSource(stream);
-      const analyser = audioContext.createAnalyser();
+        const stream =
+          await navigator.mediaDevices.getUserMedia(
+            {
+              audio: true,
+            }
+          );
 
-      analyser.fftSize = 128;
-      analyser.smoothingTimeConstant = 0.75;
+        const audioContext =
+          new AudioContext();
 
-      source.connect(analyser);
+        const source =
+          audioContext.createMediaStreamSource(
+            stream
+          );
 
-      audioContextRef.current = audioContext;
-      analyserRef.current = analyser;
+        const analyser =
+          audioContext.createAnalyser();
 
-      dataArrayRef.current = new Uint8Array(analyser.frequencyBinCount);
+        analyser.fftSize =
+          128;
 
-      const mediaRecorder = new MediaRecorder(stream);
+        analyser.smoothingTimeConstant =
+          0.75;
 
-      mediaRecorderRef.current = mediaRecorder;
-      audioChunksRef.current = [];
+        source.connect(
+          analyser
+        );
 
-      mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          audioChunksRef.current.push(event.data);
-        }
-      };
+        audioContextRef.current =
+          audioContext;
 
-      mediaRecorder.onstop = () => {
-        const audioBlob = new Blob(audioChunksRef.current, {
-          type: "audio/webm",
-        });
+        analyserRef.current =
+          analyser;
 
-        const url = URL.createObjectURL(audioBlob);
+        dataArrayRef.current =
+          new Uint8Array(
+            analyser.frequencyBinCount
+          );
 
-        setAudioUrl(url);
+        const mediaRecorder =
+          new MediaRecorder(
+            stream
+          );
 
-        stream.getTracks().forEach((track) => track.stop());
-      };
+        mediaRecorderRef.current =
+          mediaRecorder;
 
-      mediaRecorder.start();
+        audioChunksRef.current =
+          [];
 
-      setIsRecording(true);
-      setRecordingTime(0);
-      setTranscription(null);
+        mediaRecorder.ondataavailable =
+          (event) => {
+            if (
+              event.data.size >
+              0
+            ) {
+              audioChunksRef.current.push(
+                event.data
+              );
+            }
+          };
 
-      setMemory({
-        summary: null,
-        topics: [],
-        ideas: [],
-        tasks: [],
-        people: [],
-        projects: [],
-      });
+        mediaRecorder.onstop =
+          () => {
+            const audioBlob =
+              new Blob(
+                audioChunksRef.current,
+                {
+                  type: "audio/webm",
+                }
+              );
 
-      timerRef.current = window.setInterval(() => {
-        setRecordingTime((previousTime) => previousTime + 1);
-      }, 1000);
-    } catch (error) {
-      console.error("Microphone access denied:", error);
+            const url =
+              URL.createObjectURL(
+                audioBlob
+              );
 
-      setErrorMessage(
-        "EcoMind needs microphone access to record. Check your browser permissions and try again."
-      );
-    }
-  };
+            setAudioUrl(url);
 
-  const stopRecording = () => {
-    if (mediaRecorderRef.current) {
-      mediaRecorderRef.current.stop();
-    }
+            stream
+              .getTracks()
+              .forEach(
+                (track) =>
+                  track.stop()
+              );
+          };
 
-    setIsRecording(false);
+        mediaRecorder.start();
 
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-      timerRef.current = null;
-    }
+        setIsRecording(true);
 
-    if (audioContextRef.current) {
-      audioContextRef.current.close();
-      audioContextRef.current = null;
-    }
+        setRecordingTime(0);
 
-    analyserRef.current = null;
-    dataArrayRef.current = null;
-  };
+        setTranscription(null);
 
-  const uploadRecording = async () => {
-    if (!audioUrl) {
-      return;
-    }
+        setSummary(null);
 
-    try {
-      setIsUploading(true);
-      setErrorMessage(null);
+        timerRef.current =
+          window.setInterval(
+            () => {
+              setRecordingTime(
+                (previousTime) =>
+                  previousTime + 1
+              );
+            },
+            1000
+          );
 
-      const response = await fetch(audioUrl);
-      const audioBlob = await response.blob();
+      } catch (error) {
+        console.error(
+          "Microphone access denied:",
+          error
+        );
 
-      const formData = new FormData();
+        setErrorMessage(
+          "EcoMind needs microphone access to record. Check your browser permissions and try again."
+        );
+      }
+    };
 
-      formData.append(
-        "audio",
-        audioBlob,
-        `ecomind-recording-${Date.now()}.webm`
-      );
+  // --------------------------------------------------
+  // STOP RECORDING
+  // --------------------------------------------------
 
-      formData.append("language", language);
-
-      const uploadResponse = await fetch(
-        "http://127.0.0.1:8000/api/v1/voice-notes/upload",
-        {
-          method: "POST",
-          body: formData,
-        }
-      );
-
-      if (!uploadResponse.ok) {
-        throw new Error("Upload failed");
+  const stopRecording =
+    () => {
+      if (
+        mediaRecorderRef.current
+      ) {
+        mediaRecorderRef.current.stop();
       }
 
-      const result = await uploadResponse.json();
+      setIsRecording(false);
 
-      setTranscription(result.transcription);
+      if (
+        timerRef.current
+      ) {
+        clearInterval(
+          timerRef.current
+        );
 
-      setMemory({
-        summary: result.summary ?? null,
-        topics: result.topics ?? [],
-        ideas: result.ideas ?? [],
-        tasks: result.tasks ?? [],
-        people: result.people ?? [],
-        projects: result.projects ?? [],
-      });
+        timerRef.current =
+          null;
+      }
 
-      console.log("EcoMind memory created:", result);
-    } catch (error) {
-      console.error("Upload error:", error);
+      if (
+        audioContextRef.current
+      ) {
+        audioContextRef.current.close();
 
-      setErrorMessage(
-        "Couldn't save that recording. Check your connection and try again."
+        audioContextRef.current =
+          null;
+      }
+
+      analyserRef.current =
+        null;
+
+      dataArrayRef.current =
+        null;
+    };
+
+  // --------------------------------------------------
+  // UPLOAD AND PROCESS RECORDING
+  // --------------------------------------------------
+
+  const uploadRecording =
+    async () => {
+      if (!audioUrl) {
+        return;
+      }
+
+      try {
+        setIsUploading(true);
+
+        setErrorMessage(null);
+
+        const response =
+          await fetch(
+            audioUrl
+          );
+
+        const audioBlob =
+          await response.blob();
+
+        const formData =
+          new FormData();
+
+        formData.append(
+          "audio",
+          audioBlob,
+          `ecomind-recording-${Date.now()}.webm`
+        );
+
+        formData.append(
+          "language",
+          language
+        );
+
+        const uploadResponse =
+          await fetch(
+            "http://127.0.0.1:8000/api/v1/voice-notes/upload",
+            {
+              method: "POST",
+              body: formData,
+            }
+          );
+
+        if (
+          !uploadResponse.ok
+        ) {
+          throw new Error(
+            "Upload failed"
+          );
+        }
+
+        const result =
+          await uploadResponse.json();
+
+        setTranscription(
+          result.transcription
+        );
+
+        setSummary(
+          result.summary
+        );
+
+        await fetchMemories();
+
+        console.log(
+          "Upload successful:",
+          result
+        );
+
+      } catch (error) {
+        console.error(
+          "Upload error:",
+          error
+        );
+
+        setErrorMessage(
+          "Couldn't save that recording. Check your connection and try again."
+        );
+
+      } finally {
+        setIsUploading(
+          false
+        );
+      }
+    };
+
+  // --------------------------------------------------
+  // DELETE RECORDING
+  // --------------------------------------------------
+
+  const deleteRecording =
+    () => {
+      if (audioUrl) {
+        URL.revokeObjectURL(
+          audioUrl
+        );
+      }
+
+      setAudioUrl(null);
+
+      setTranscription(
+        null
       );
-    } finally {
-      setIsUploading(false);
-    }
-  };
 
-  const deleteRecording = () => {
-    if (audioUrl) {
-      URL.revokeObjectURL(audioUrl);
-    }
+      setSummary(null);
 
-    setAudioUrl(null);
-    setTranscription(null);
-    setRecordingTime(0);
+      setRecordingTime(0);
+    };
 
-    setMemory({
-      summary: null,
-      topics: [],
-      ideas: [],
-      tasks: [],
-      people: [],
-      projects: [],
-    });
-  };
+  // --------------------------------------------------
+  // FORMAT TIME
+  // --------------------------------------------------
 
-  const formatTime = (seconds: number) => {
-    const minutes = Math.floor(seconds / 60);
-    const remainingSeconds = seconds % 60;
+  const formatTime =
+    (
+      seconds: number
+    ) => {
+      const minutes =
+        Math.floor(
+          seconds / 60
+        );
 
-    return `${String(minutes).padStart(2, "0")}:${String(
-      remainingSeconds
-    ).padStart(2, "0")}`;
-  };
+      const remainingSeconds =
+        seconds % 60;
 
-  const hasMemory =
-    memory.summary ||
-    memory.topics.length > 0 ||
-    memory.ideas.length > 0 ||
-    memory.tasks.length > 0 ||
-    memory.people.length > 0 ||
-    memory.projects.length > 0;
+      return `${String(
+        minutes
+      ).padStart(
+        2,
+        "0"
+      )}:${String(
+        remainingSeconds
+      ).padStart(
+        2,
+        "0"
+      )}`;
+    };
+
+  // --------------------------------------------------
+  // RENDER
+  // --------------------------------------------------
 
   return (
     <div className="app">
-      <div className="grain" aria-hidden="true" />
-      <div className="orb orb-a" aria-hidden="true" />
-      <div className="orb orb-b" aria-hidden="true" />
+
+      <div
+        className="grain"
+        aria-hidden="true"
+      />
+
+      <div
+        className="orb orb-a"
+        aria-hidden="true"
+      />
+
+      <div
+        className="orb orb-b"
+        aria-hidden="true"
+      />
+
+      {/* HEADER */}
 
       <header className="header">
+
         <div className="wordmark">
-          <span className="wordmark__eco">Eco</span>
-          <span className="wordmark__mind">Mind</span>
+
+          <span className="wordmark__eco">
+            Eco
+          </span>
+
+          <span className="wordmark__mind">
+            Mind
+          </span>
+
         </div>
 
-        <p className="tagline">Speak freely. We'll remember it for you.</p>
+        <p className="tagline">
+          Speak freely. We'll remember it for you.
+        </p>
+
       </header>
 
+      {/* MAIN */}
+
       <main className="stage">
+
+        {/* RECORDER PANEL */}
+
         <div className="panel">
-          {/* LANGUAGE SELECTOR */}
+
+          {/* LANGUAGE */}
+
           <div className="language-field">
-            <label htmlFor="language">Transcribe in</label>
+
+            <label htmlFor="language">
+              Transcribe in
+            </label>
 
             <div className="select-wrap">
+
               <select
                 id="language"
                 value={language}
-                onChange={(event) => {
-                  setLanguage(event.target.value);
-                }}
-                disabled={isRecording}
-                aria-label="Choose transcription language"
+                onChange={(
+                  event
+                ) =>
+                  setLanguage(
+                    event.target.value
+                  )
+                }
+                disabled={
+                  isRecording
+                }
               >
-                {LANGUAGES.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
+
+                {LANGUAGES.map(
+                  (
+                    option
+                  ) => (
+
+                    <option
+                      key={
+                        option.value
+                      }
+                      value={
+                        option.value
+                      }
+                    >
+
+                      {
+                        option.label
+                      }
+
+                    </option>
+
+                  )
+                )}
+
               </select>
 
               <ChevronDown
@@ -381,222 +838,1195 @@ function App() {
                 className="select-chevron"
                 aria-hidden="true"
               />
+
             </div>
+
           </div>
 
           {/* RECORDER */}
+
           <div className="recorder">
+
             <div className="organism-wrap">
-              <div className="petal-ring" ref={ringRef}>
-                {Array.from({ length: PETAL_COUNT }).map((_, index) => (
-                  <div
-                    key={index}
-                    className="petal"
-                    ref={(element) => {
-                      petalRefs.current[index] = element;
-                    }}
-                  />
-                ))}
+
+              <div
+                className="petal-ring"
+                ref={ringRef}
+              >
+
+                {Array.from({
+                  length:
+                    PETAL_COUNT,
+                }).map(
+                  (
+                    _,
+                    index
+                  ) => (
+
+                    <div
+                      key={index}
+                      className="petal"
+                      ref={(
+                        el
+                      ) => {
+                        petalRefs.current[
+                          index
+                        ] =
+                          el;
+                      }}
+                    />
+
+                  )
+                )}
+
               </div>
 
               <button
                 type="button"
-                className={`core ${isRecording ? "core--recording" : ""}`}
+                className={`core ${
+                  isRecording
+                    ? "core--recording"
+                    : ""
+                }`}
                 ref={coreRef}
-                onClick={isRecording ? stopRecording : startRecording}
-                aria-pressed={isRecording}
-                aria-label={isRecording ? "Stop recording" : "Start recording"}
+                onClick={
+                  isRecording
+                    ? stopRecording
+                    : startRecording
+                }
+                aria-pressed={
+                  isRecording
+                }
+                aria-label={
+                  isRecording
+                    ? "Stop recording"
+                    : "Start recording"
+                }
               >
-                {isRecording ? <Square size={26} /> : <Mic size={30} />}
+
+                {isRecording ? (
+                  <Square
+                    size={26}
+                  />
+                ) : (
+                  <Mic
+                    size={30}
+                  />
+                )}
+
               </button>
+
             </div>
 
-            <div className="timer">{formatTime(recordingTime)}</div>
+            <div className="timer">
+
+              {formatTime(
+                recordingTime
+              )}
+
+            </div>
 
             <p className="status-label">
+
               {isRecording
                 ? "Listening… tap to stop"
                 : "Tap the bloom to start recording"}
+
             </p>
+
           </div>
 
           {/* ERROR */}
+
           {errorMessage && (
-            <div className="banner banner--error" role="alert">
-              <span>{errorMessage}</span>
+
+            <div
+              className="banner banner--error"
+              role="alert"
+            >
+
+              <span>
+                {errorMessage}
+              </span>
 
               <button
                 type="button"
                 className="banner__dismiss"
-                onClick={() => setErrorMessage(null)}
+                onClick={() =>
+                  setErrorMessage(
+                    null
+                  )
+                }
                 aria-label="Dismiss message"
               >
+
                 <X size={15} />
+
               </button>
+
             </div>
+
           )}
 
           {/* RECORDING RESULT */}
+
           {audioUrl && (
+
             <div className="result-card">
+
               <div className="result-card__header">
-                <h2>Your recording</h2>
+
+                <h2>
+                  Your recording
+                </h2>
+
                 <span className="result-card__duration">
-                  {formatTime(recordingTime)}
+
+                  {formatTime(
+                    recordingTime
+                  )}
+
                 </span>
+
               </div>
 
               <div className="audio-well">
-                <audio controls src={audioUrl} />
+
+                <audio
+                  controls
+                  src={audioUrl}
+                />
+
               </div>
 
               <div className="result-actions">
+
                 <button
                   className="btn btn--primary"
-                  onClick={uploadRecording}
-                  disabled={isUploading}
+                  onClick={
+                    uploadRecording
+                  }
+                  disabled={
+                    isUploading
+                  }
                 >
+
                   {isUploading ? (
+
                     <>
-                      <Loader2 size={18} className="spin" />
-                      Saving and analyzing…
+
+                      <Loader2
+                        size={18}
+                        className="spin"
+                      />
+
+                      Transcribing…
+
                     </>
+
                   ) : (
+
                     "Save to EcoMind"
+
                   )}
+
                 </button>
 
-                <button className="btn btn--ghost" onClick={deleteRecording}>
-                  <Trash2 size={16} />
+                <button
+                  className="btn btn--ghost"
+                  onClick={
+                    deleteRecording
+                  }
+                >
+
+                  <Trash2
+                    size={16}
+                  />
+
                   Discard
+
                 </button>
+
               </div>
 
               {/* TRANSCRIPT */}
+
               {transcription && (
+
                 <div className="transcript">
+
                   <div className="transcript__label">
-                    <Leaf size={14} />
+
+                    <Leaf
+                      size={14}
+                    />
+
                     Transcript
+
                   </div>
 
-                  <p>{transcription}</p>
+                  <p>
+                    {
+                      transcription
+                    }
+                  </p>
+
                 </div>
+
               )}
 
-              {/* AI MEMORY */}
-              {hasMemory && (
-                <div className="memory-section">
-                  <div className="memory-header">
-                    <Sparkles size={18} />
+              {/* SUMMARY */}
 
-                    <div>
-                      <h2>EcoMind understood</h2>
-                      <p>Your voice note has been transformed into memory.</p>
-                    </div>
+              {summary && (
+
+                <div className="transcript">
+
+                  <div className="transcript__label">
+
+                    <Leaf
+                      size={14}
+                    />
+
+                    EcoMind understood
+
                   </div>
 
-                  {memory.summary && (
-                    <div className="memory-block memory-block--summary">
-                      <div className="memory-block__label">
-                        <Sparkles size={15} />
-                        Summary
-                      </div>
+                  <p>
+                    {summary}
+                  </p>
 
-                      <p>{memory.summary}</p>
-                    </div>
-                  )}
-
-                  {memory.topics.length > 0 && (
-                    <div className="memory-block">
-                      <div className="memory-block__label">Topics</div>
-
-                      <div className="memory-tags">
-                        {memory.topics.map((topic, index) => (
-                          <span key={`${topic}-${index}`} className="memory-tag">
-                            {topic}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {memory.ideas.length > 0 && (
-                    <div className="memory-block">
-                      <div className="memory-block__label">
-                        <Lightbulb size={15} />
-                        Ideas
-                      </div>
-
-                      <ul className="memory-list">
-                        {memory.ideas.map((idea, index) => (
-                          <li key={`${idea}-${index}`}>{idea}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-
-                  {memory.tasks.length > 0 && (
-                    <div className="memory-block">
-                      <div className="memory-block__label">
-                        <CheckSquare size={15} />
-                        Tasks
-                      </div>
-
-                      <ul className="memory-list">
-                        {memory.tasks.map((task, index) => (
-                          <li key={`${task}-${index}`}>{task}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-
-                  {memory.people.length > 0 && (
-                    <div className="memory-block">
-                      <div className="memory-block__label">
-                        <Users size={15} />
-                        People
-                      </div>
-
-                      <div className="memory-tags">
-                        {memory.people.map((person, index) => (
-                          <span key={`${person}-${index}`} className="memory-tag">
-                            {person}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {memory.projects.length > 0 && (
-                    <div className="memory-block">
-                      <div className="memory-block__label">
-                        <FolderKanban size={15} />
-                        Projects
-                      </div>
-
-                      <div className="memory-tags">
-                        {memory.projects.map((project, index) => (
-                          <span
-                            key={`${project}-${index}`}
-                            className="memory-tag"
-                          >
-                            {project}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
                 </div>
+
               )}
+
             </div>
+
           )}
+
         </div>
 
+        {/* MEMORY LIBRARY */}
+
+        <section className="memory-library">
+
+          <div className="memory-library__header">
+
+            <div>
+
+              <p className="eyebrow">
+                Your memories
+              </p>
+
+              <h2>
+                Memory Library
+              </h2>
+
+            </div>
+
+            <span className="memory-count">
+
+              {memories.length}{" "}
+
+              {memories.length === 1
+                ? "memory"
+                : "memories"}
+
+            </span>
+
+          </div>
+
+          {/* SEARCH AND FILTER TOOLBAR */}
+
+          <div className="memory-toolbar">
+
+            <div className="memory-search">
+
+              <input
+                type="text"
+                placeholder="Search your memories..."
+                value={searchQuery}
+                onChange={(
+                  event
+                ) =>
+                  setSearchQuery(
+                    event.target.value
+                  )
+                }
+              />
+
+            </div>
+
+            <button
+              type="button"
+              className="tasks-button"
+              onClick={() =>
+                setShowTasksOnly(
+                  !showTasksOnly
+                )
+              }
+            >
+
+              {showTasksOnly
+                ? "Show all memories"
+                : "View tasks"}
+
+            </button>
+
+          </div>
+
+          {searchQuery && (
+
+            <p className="search-results-count">
+
+              Showing{" "}
+              {
+                filteredMemories.length
+              }{" "}
+              of{" "}
+              {
+                memories.length
+              }{" "}
+              memories
+
+            </p>
+
+          )}
+
+          {isLoadingMemories ? (
+
+            <div className="memory-empty">
+
+              <Loader2
+                className="spin"
+                size={22}
+              />
+
+              <span>
+                Loading memories...
+              </span>
+
+            </div>
+
+          ) : filteredMemories.length === 0 ? (
+
+            <div className="memory-empty">
+
+              <Leaf size={24} />
+
+              <p>
+
+                {searchQuery ||
+                showTasksOnly
+                  ? "No matching memories found."
+                  : "Your saved memories will appear here."}
+
+              </p>
+
+              <span>
+
+                {searchQuery ||
+                showTasksOnly
+                  ? "Try a different search or filter."
+                  : "Record something to start building your personal memory."}
+
+              </span>
+
+            </div>
+
+          ) : (
+
+            <div className="memory-list">
+
+              {filteredMemories.map(
+                (
+                  memory
+                ) => (
+
+                  <article
+                    key={
+                      memory.id
+                    }
+                    className="memory-card"
+                    onClick={() =>
+                      setSelectedMemory(
+                        memory
+                      )
+                    }
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(
+                      event
+                    ) => {
+
+                      if (
+                        event.key ===
+                          "Enter" ||
+                        event.key ===
+                          " "
+                      ) {
+
+                        setSelectedMemory(
+                          memory
+                        );
+
+                      }
+
+                    }}
+                  >
+
+                    {/* CARD HEADER */}
+
+                    <div className="memory-card__top">
+
+                      <div className="memory-card__meta">
+
+                        <span className="memory-card__date">
+
+                          {new Date(
+                            memory.created_at
+                          ).toLocaleDateString(
+                            "en-US",
+                            {
+                              month:
+                                "short",
+                              day:
+                                "numeric",
+                              year:
+                                "numeric",
+                            }
+                          )}
+
+                        </span>
+
+                        <span className="memory-card__language">
+
+                          {(
+                            memory.language ||
+                            "en"
+                          ).toUpperCase()}
+
+                        </span>
+
+                      </div>
+
+                      <button
+                        type="button"
+                        className="memory-card__delete"
+                        onClick={(
+                          event
+                        ) => {
+
+                          event.stopPropagation();
+
+                          setMemoryToDelete(
+                            memory
+                          );
+
+                        }}
+                        aria-label="Delete memory"
+                        title="Delete memory"
+                      >
+
+                        <Trash2
+                          size={16}
+                        />
+
+                      </button>
+
+                    </div>
+
+                    {/* SUMMARY */}
+
+                    <h3 className="memory-card__summary">
+
+                      {
+                        memory.summary ||
+                        "Untitled memory"
+                      }
+
+                    </h3>
+
+                    {/* TOPICS */}
+
+                    {memory.topics &&
+                      memory.topics.length >
+                        0 && (
+
+                        <div className="memory-card__topics">
+
+                          {memory.topics.map(
+                            (
+                              topic
+                            ) => (
+
+                              <span
+                                key={
+                                  topic
+                                }
+                                className="topic-pill"
+                              >
+
+                                {
+                                  topic
+                                }
+
+                              </span>
+
+                            )
+                          )}
+
+                        </div>
+
+                      )}
+
+                    {/* TASKS */}
+
+                    {memory.tasks &&
+                      memory.tasks.length >
+                        0 && (
+
+                        <div className="memory-card__section">
+
+                          <p className="memory-card__section-label">
+
+                            TASKS
+
+                          </p>
+
+                          <ul>
+
+                            {memory.tasks.map(
+                              (
+                                task
+                              ) => (
+
+                                <li
+                                  key={
+                                    task
+                                  }
+                                >
+
+                                  {
+                                    task
+                                  }
+
+                                </li>
+
+                              )
+                            )}
+
+                          </ul>
+
+                        </div>
+
+                      )}
+
+                    {/* IDEAS */}
+
+                    {memory.ideas &&
+                      memory.ideas.length >
+                        0 && (
+
+                        <div className="memory-card__section">
+
+                          <p className="memory-card__section-label">
+
+                            IDEAS
+
+                          </p>
+
+                          <ul>
+
+                            {memory.ideas.map(
+                              (
+                                idea
+                              ) => (
+
+                                <li
+                                  key={
+                                    idea
+                                  }
+                                >
+
+                                  {
+                                    idea
+                                  }
+
+                                </li>
+
+                              )
+                            )}
+
+                          </ul>
+
+                        </div>
+
+                      )}
+
+                    {/* PEOPLE */}
+
+                    {memory.people &&
+                      memory.people.length >
+                        0 && (
+
+                        <div className="memory-card__section">
+
+                          <p className="memory-card__section-label">
+
+                            PEOPLE
+
+                          </p>
+
+                          <div className="memory-card__chips">
+
+                            {memory.people.map(
+                              (
+                                person
+                              ) => (
+
+                                <span
+                                  key={
+                                    person
+                                  }
+                                  className="memory-chip"
+                                >
+
+                                  {
+                                    person
+                                  }
+
+                                </span>
+
+                              )
+                            )}
+
+                          </div>
+
+                        </div>
+
+                      )}
+
+                    {/* PROJECTS */}
+
+                    {memory.projects &&
+                      memory.projects.length >
+                        0 && (
+
+                        <div className="memory-card__section">
+
+                          <p className="memory-card__section-label">
+
+                            PROJECTS
+
+                          </p>
+
+                          <div className="memory-card__chips">
+
+                            {memory.projects.map(
+                              (
+                                project
+                              ) => (
+
+                                <span
+                                  key={
+                                    project
+                                  }
+                                  className="memory-chip memory-chip--project"
+                                >
+
+                                  {
+                                    project
+                                  }
+
+                                </span>
+
+                              )
+                            )}
+
+                          </div>
+
+                        </div>
+
+                      )}
+
+                    {/* TRANSCRIPT */}
+
+                    <details
+                      className="memory-card__details"
+                      onClick={(
+                        event
+                      ) =>
+                        event.stopPropagation()
+                      }
+                    >
+
+                      <summary>
+                        View transcript
+                      </summary>
+
+                      <p>
+
+                        {
+                          memory.transcription
+                        }
+
+                      </p>
+
+                    </details>
+
+                  </article>
+
+                )
+              )}
+
+            </div>
+
+          )}
+
+        </section>
+
         <p className="footnote">
+
           Recordings stay on this device until you save them to EcoMind.
+
         </p>
+
       </main>
+
+      {/* MEMORY MODAL */}
+
+      {selectedMemory && (
+
+        <div
+          className="memory-modal"
+          onClick={() =>
+            setSelectedMemory(
+              null
+            )
+          }
+        >
+
+          <div
+            className="memory-modal__content"
+            onClick={(
+              event
+            ) =>
+              event.stopPropagation()
+            }
+          >
+
+            <button
+              type="button"
+              className="memory-modal__close"
+              onClick={() =>
+                setSelectedMemory(
+                  null
+                )
+              }
+              aria-label="Close memory"
+            >
+
+              <X
+                size={20}
+              />
+
+            </button>
+
+            <div className="memory-modal__meta">
+
+              <span>
+
+                {new Date(
+                  selectedMemory.created_at
+                ).toLocaleDateString(
+                  "en-US",
+                  {
+                    month:
+                      "long",
+                    day:
+                      "numeric",
+                    year:
+                      "numeric",
+                  }
+                )}
+
+              </span>
+
+              <span>
+
+                {(
+                  selectedMemory.language ||
+                  "en"
+                ).toUpperCase()}
+
+              </span>
+
+            </div>
+
+            <p className="eyebrow">
+
+              EcoMind understood
+
+            </p>
+
+            <h2 className="memory-modal__title">
+
+              {
+                selectedMemory.summary
+              }
+
+            </h2>
+
+            {/* TOPICS */}
+
+            {selectedMemory.topics &&
+              selectedMemory.topics.length >
+                0 && (
+
+                <div className="memory-modal__group">
+
+                  <p className="memory-modal__label">
+
+                    TOPICS
+
+                  </p>
+
+                  <div className="memory-card__topics">
+
+                    {selectedMemory.topics.map(
+                      (
+                        topic
+                      ) => (
+
+                        <span
+                          key={
+                            topic
+                          }
+                          className="topic-pill"
+                        >
+
+                          {
+                            topic
+                          }
+
+                        </span>
+
+                      )
+                    )}
+
+                  </div>
+
+                </div>
+
+              )}
+
+            {/* TASKS */}
+
+            {selectedMemory.tasks &&
+              selectedMemory.tasks.length >
+                0 && (
+
+                <div className="memory-modal__group">
+
+                  <p className="memory-modal__label">
+
+                    TASKS
+
+                  </p>
+
+                  <ul className="memory-modal__list">
+
+                    {selectedMemory.tasks.map(
+                      (
+                        task
+                      ) => (
+
+                        <li
+                          key={
+                            task
+                          }
+                        >
+
+                          {
+                            task
+                          }
+
+                        </li>
+
+                      )
+                    )}
+
+                  </ul>
+
+                </div>
+
+              )}
+
+            {/* IDEAS */}
+
+            {selectedMemory.ideas &&
+              selectedMemory.ideas.length >
+                0 && (
+
+                <div className="memory-modal__group">
+
+                  <p className="memory-modal__label">
+
+                    IDEAS
+
+                  </p>
+
+                  <ul className="memory-modal__list">
+
+                    {selectedMemory.ideas.map(
+                      (
+                        idea
+                      ) => (
+
+                        <li
+                          key={
+                            idea
+                          }
+                        >
+
+                          {
+                            idea
+                          }
+
+                        </li>
+
+                      )
+                    )}
+
+                  </ul>
+
+                </div>
+
+              )}
+
+            {/* PEOPLE */}
+
+            {selectedMemory.people &&
+              selectedMemory.people.length >
+                0 && (
+
+                <div className="memory-modal__group">
+
+                  <p className="memory-modal__label">
+
+                    PEOPLE
+
+                  </p>
+
+                  <div className="memory-card__chips">
+
+                    {selectedMemory.people.map(
+                      (
+                        person
+                      ) => (
+
+                        <span
+                          key={
+                            person
+                          }
+                          className="memory-chip"
+                        >
+
+                          {
+                            person
+                          }
+
+                        </span>
+
+                      )
+                    )}
+
+                  </div>
+
+                </div>
+
+              )}
+
+            {/* PROJECTS */}
+
+            {selectedMemory.projects &&
+              selectedMemory.projects.length >
+                0 && (
+
+                <div className="memory-modal__group">
+
+                  <p className="memory-modal__label">
+
+                    PROJECTS
+
+                  </p>
+
+                  <div className="memory-card__chips">
+
+                    {selectedMemory.projects.map(
+                      (
+                        project
+                      ) => (
+
+                        <span
+                          key={
+                            project
+                          }
+                          className="memory-chip memory-chip--project"
+                        >
+
+                          {
+                            project
+                          }
+
+                        </span>
+
+                      )
+                    )}
+
+                  </div>
+
+                </div>
+
+              )}
+
+            {/* ORIGINAL TRANSCRIPT */}
+
+            <div className="memory-modal__transcript">
+
+              <p className="memory-modal__label">
+
+                ORIGINAL TRANSCRIPT
+
+              </p>
+
+              <p>
+
+                {
+                  selectedMemory.transcription
+                }
+
+              </p>
+
+            </div>
+
+            {/* DELETE FROM MODAL */}
+
+            <button
+              type="button"
+              className="btn btn--danger"
+              onClick={() =>
+                setMemoryToDelete(
+                  selectedMemory
+                )
+              }
+            >
+
+              <Trash2
+                size={16}
+              />
+
+              Delete memory
+
+            </button>
+
+          </div>
+
+        </div>
+
+      )}
+
+      {/* DELETE CONFIRMATION MODAL */}
+
+      {memoryToDelete && (
+
+        <div
+          className="delete-confirm-overlay"
+          onClick={() =>
+            setMemoryToDelete(
+              null
+            )
+          }
+        >
+
+          <div
+            className="delete-confirm-modal"
+            onClick={(
+              event
+            ) =>
+              event.stopPropagation()
+            }
+          >
+
+            <div className="delete-confirm-icon">
+
+              <Trash2
+                size={22}
+              />
+
+            </div>
+
+            <p className="eyebrow">
+
+              Delete memory
+
+            </p>
+
+            <h2>
+
+              Are you sure?
+
+            </h2>
+
+            <p className="delete-confirm-text">
+
+              This memory will be permanently removed
+              from your EcoMind library.
+
+            </p>
+
+            <div className="delete-confirm-actions">
+
+              <button
+                type="button"
+                className="btn btn--ghost"
+                onClick={() =>
+                  setMemoryToDelete(
+                    null
+                  )
+                }
+              >
+
+                Cancel
+
+              </button>
+
+              <button
+                type="button"
+                className="btn btn--danger"
+                onClick={() =>
+                  deleteMemory(
+                    memoryToDelete.id
+                  )
+                }
+              >
+
+                <Trash2
+                  size={16}
+                />
+
+                Delete
+
+              </button>
+
+            </div>
+
+          </div>
+
+        </div>
+
+      )}
+
     </div>
   );
 }

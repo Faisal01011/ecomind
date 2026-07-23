@@ -172,10 +172,14 @@ async def upload_voice_note(
 # --------------------------------------------------
 
 @app.get("/api/v1/voice-notes")
-def get_voice_notes(db: Session = Depends(get_db)):
+def get_voice_notes(
+    db: Session = Depends(get_db),
+):
     notes = (
         db.query(models.VoiceNote)
-        .order_by(models.VoiceNote.created_at.desc())
+        .order_by(
+            models.VoiceNote.created_at.desc()
+        )
         .all()
     )
 
@@ -190,13 +194,107 @@ def get_voice_notes(db: Session = Depends(get_db)):
                 "language": note.language,
                 "transcription": note.transcription,
                 "summary": note.summary,
-                "topics": json.loads(note.topics or "[]"),
-                "ideas": json.loads(note.ideas or "[]"),
-                "tasks": json.loads(note.tasks or "[]"),
-                "people": json.loads(note.people or "[]"),
-                "projects": json.loads(note.projects or "[]"),
+
+                "topics": json.loads(
+                    note.topics or "[]"
+                ),
+
+                "ideas": json.loads(
+                    note.ideas or "[]"
+                ),
+
+                "tasks": json.loads(
+                    note.tasks or "[]"
+                ),
+
+                "people": json.loads(
+                    note.people or "[]"
+                ),
+
+                "projects": json.loads(
+                    note.projects or "[]"
+                ),
+
                 "created_at": note.created_at,
             }
         )
+
+    return results
+    notes = (
+        db.query(models.VoiceNote)
+        .order_by(
+            models.VoiceNote.created_at.desc()
+        )
+        .all()
+    )
+
+    results = []
+
+    for note in notes:
+        results.append(
+            {
+                "id": note.id,
+                "filename": note.filename,
+                "audio_path": note.audio_path,
+                "language": note.language,
+                "transcription": note.transcription,
+                "summary": note.summary,
+
+                "topics": json.loads(
+                    note.topics or "[]"
+                ),
+
+                "ideas": json.loads(
+                    note.ideas or "[]"
+                ),
+
+                "tasks": json.loads(
+                    note.tasks or "[]"
+                ),
+
+                "people": json.loads(
+                    note.people or "[]"
+                ),
+
+                "projects": json.loads(
+                    note.projects or "[]"
+                ),
+
+                "created_at": note.created_at,
+            }
+        )
+
+    print(
+        f"📚 Returning {len(results)} memories"
+    )
+    # --------------------------------------------------
+# DELETE A VOICE NOTE
+# --------------------------------------------------
+
+@app.delete("/api/v1/voice-notes/{note_id}")
+def delete_voice_note(
+    note_id: int,
+    db: Session = Depends(get_db),
+):
+    note = (
+        db.query(models.VoiceNote)
+        .filter(models.VoiceNote.id == note_id)
+        .first()
+    )
+
+    if not note:
+        return {
+            "success": False,
+            "message": "Memory not found",
+        }
+
+    db.delete(note)
+    db.commit()
+
+    return {
+        "success": True,
+        "message": "Memory deleted successfully",
+        "id": note_id,
+    }
 
     return results
