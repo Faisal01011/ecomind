@@ -4,6 +4,7 @@ from uuid import uuid4
 
 from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
 
 from app import models
@@ -75,6 +76,64 @@ def serialize_note(note: models.VoiceNote) -> dict:
     }
 
 
+def note_to_markdown(note: models.VoiceNote) -> str:
+    """Render a single voice note as clean Markdown (Obsidian-friendly)."""
+    created = note.created_at.strftime("%Y-%m-%d %H:%M") if note.created_at else "unknown"
+    title = (note.summary or "Untitled memory").strip()
+    lines = [
+        f"# {title}",
+        "",
+        f"- **Date:** {created}",
+        f"- **Language:** {(note.language or 'en').upper()}",
+        f"- **Status:** {note.status or 'unknown'}",
+        "",
+    ]
+
+    if note.topics:
+        lines.append("## Topics")
+        lines.append("")
+        for t in note.topics:
+            lines.append(f"- {t}")
+        lines.append("")
+
+    if note.tasks:
+        lines.append("## Tasks")
+        lines.append("")
+        for t in note.tasks:
+            lines.append(f"- [ ] {t}")
+        lines.append("")
+
+    if note.ideas:
+        lines.append("## Ideas")
+        lines.append("")
+        for i in note.ideas:
+            lines.append(f"- {i}")
+        lines.append("")
+
+    if note.people:
+        lines.append("## People")
+        lines.append("")
+        lines.append(", ".join(note.people))
+        lines.append("")
+
+    if note.projects:
+        lines.append("## Projects")
+        lines.append("")
+        lines.append(", ".join(note.projects))
+        lines.append("")
+
+    if note.transcription:
+        lines.append("## Original Transcript")
+        lines.append("")
+        lines.append(note.transcription.strip())
+        lines.append("")
+
+    lines.append("---")
+    lines.append("*Exported from EcoMind*")
+    lines.append("")
+    return "\n".join(lines)
+
+
 def process_voice_note_background(note_id: int, audio_path: str, language: str):
     """
     Background worker that runs Whisper + Ollama and updates the DB record.
@@ -94,16 +153,13 @@ def process_voice_note_background(note_id: int, audio_path: str, language: str):
         print(f"📁 Audio file: {audio_path}")
         print(f"🌍 Language: {language}")
 
-        # 1. Transcribe
         transcription_start = time.time()
         transcript = transcribe_audio(audio_path, language)
         print(f"🎙️ Transcription completed in {time.time() - transcription_start:.2f}s")
         print(f"📝 Transcript length: {len(transcript)} characters")
 
-        # 2. Analyze with LLM
         memory = process_memory(transcript)
 
-        # 3. Persist results
         note.transcription = transcript
         note.summary = memory.get("summary", "AI analysis unavailable")
         note.topics = memory.get("topics", [])
@@ -145,10 +201,6 @@ def root():
     }
 
 
-# --------------------------------------------------
-# HEALTH CHECK
-# --------------------------------------------------
-
 @app.get("/health")
 def health_check():
     return {"status": "healthy"}
@@ -165,17 +217,14 @@ async def upload_voice_note(
     language: str = Form("auto"),
     db: Session = Depends(get_db),
 ):
-    # 1. Generate a unique ID for the file
     file_id = str(uuid4())
     file_extension = Path(audio.filename or "recording.webm").suffix
     file_path = UPLOAD_DIR / f"{file_id}{file_extension}"
 
-    # 2. Save audio to disk
     file_content = await audio.read()
     with open(file_path, "wb") as f:
         f.write(file_content)
 
-    # 3. Create a pending record immediately
     voice_note = models.VoiceNote(
         filename=audio.filename or "recording.webm",
         audio_path=str(file_path),
@@ -193,7 +242,6 @@ async def upload_voice_note(
     db.commit()
     db.refresh(voice_note)
 
-    # 4. Kick off heavy work in the background
     background_tasks.add_task(
         process_voice_note_background,
         voice_note.id,
@@ -203,7 +251,6 @@ async def upload_voice_note(
 
     print(f"📤 Note #{voice_note.id} accepted — processing in background")
 
-    # 5. Return immediately so the client is not blocked
     return {
         **serialize_note(voice_note),
         "message": "Voice note accepted. Processing started in the background.",
@@ -227,6 +274,46 @@ def get_voice_notes(db: Session = Depends(get_db)):
 
 
 # --------------------------------------------------
+# EXPORT ALL (Markdown) — must be before /{note_id} routes
+# --------------------------------------------------
+
+@app.get("/api/v1/voice-notes/export.md", response_class=PlainTextResponse)
+def export_all_markdown(db: Session = Depends(get_db)):
+    notes = (
+        db.query(models.VoiceNote)
+        .filter(models.VoiceNote.status == "completed")
+        .order_by(models.VoiceNote.created_at.desc())
+        .all()
+    )
+    if not notes:
+        return PlainTextResponse(
+            "# EcoMind Export\n\nNo completed memories yet.\n",
+            media_type="text/markdown",
+        )
+
+    parts = [
+        "# EcoMind Memory Export",
+        "",
+        f"Exported {len(notes)} memories.",
+        "",
+        "---",
+        "",
+    ]
+    for note in notes:
+        parts.append(note_to_markdown(note))
+        parts.append("")
+
+    body = "\n".join(parts)
+    return PlainTextResponse(
+        body,
+        media_type="text/markdown",
+        headers={
+            "Content-Disposition": 'attachment; filename="ecomind-export.md"'
+        },
+    )
+
+
+# --------------------------------------------------
 # GET SINGLE VOICE NOTE (for status polling)
 # --------------------------------------------------
 
@@ -240,6 +327,29 @@ def get_voice_note(note_id: int, db: Session = Depends(get_db)):
     if not note:
         return {"success": False, "message": "Memory not found"}
     return serialize_note(note)
+
+
+# --------------------------------------------------
+# EXPORT SINGLE NOTE (Markdown)
+# --------------------------------------------------
+
+@app.get("/api/v1/voice-notes/{note_id}/export.md", response_class=PlainTextResponse)
+def export_note_markdown(note_id: int, db: Session = Depends(get_db)):
+    note = (
+        db.query(models.VoiceNote)
+        .filter(models.VoiceNote.id == note_id)
+        .first()
+    )
+    if not note:
+        return PlainTextResponse("Memory not found.\n", status_code=404)
+
+    body = note_to_markdown(note)
+    safe_name = f"ecomind-memory-{note_id}.md"
+    return PlainTextResponse(
+        body,
+        media_type="text/markdown",
+        headers={"Content-Disposition": f'attachment; filename="{safe_name}"'},
+    )
 
 
 # --------------------------------------------------
@@ -260,7 +370,6 @@ def delete_voice_note(note_id: int, db: Session = Depends(get_db)):
             "message": "Memory not found",
         }
 
-    # Clean up the audio file from disk if it exists
     if note.audio_path:
         audio_file = Path(note.audio_path)
         if audio_file.exists():
