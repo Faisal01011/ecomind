@@ -7,6 +7,7 @@ import {
   ChevronDown,
   Leaf,
   X,
+  Download,
 } from "lucide-react";
 import "./App.css";
 
@@ -14,6 +15,7 @@ const PETAL_COUNT = 48;
 const BASE_RADIUS = 64;
 const IDLE_AMPLITUDE = 5;
 const REST_LENGTH = 14;
+const API_BASE = "http://127.0.0.1:8000";
 
 const LANGUAGES = [
   { value: "auto", label: "Auto detect" },
@@ -77,14 +79,10 @@ function App() {
   const rafRef = useRef<number | null>(null);
   const pollIntervalRef = useRef<number | null>(null);
 
-  // --------------------------------------------------
-  // LOAD SAVED MEMORIES
-  // --------------------------------------------------
-
   const fetchMemories = async () => {
     try {
       setIsLoadingMemories(true);
-      const response = await fetch("http://127.0.0.1:8000/api/v1/voice-notes");
+      const response = await fetch(`${API_BASE}/api/v1/voice-notes`);
       if (!response.ok) throw new Error("Failed to fetch memories");
       const data = await response.json();
       setMemories(Array.isArray(data) ? data : []);
@@ -96,27 +94,37 @@ function App() {
     }
   };
 
-  // --------------------------------------------------
-  // POLL A SINGLE NOTE UNTIL COMPLETED / FAILED
-  // --------------------------------------------------
+  const downloadMarkdown = (path: string, filename: string) => {
+    const a = document.createElement("a");
+    a.href = `${API_BASE}${path}`;
+    a.download = filename;
+    a.rel = "noopener";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  };
+
+  const exportAllMarkdown = () => {
+    downloadMarkdown("/api/v1/voice-notes/export.md", "ecomind-export.md");
+  };
+
+  const exportNoteMarkdown = (noteId: number) => {
+    downloadMarkdown(
+      `/api/v1/voice-notes/${noteId}/export.md`,
+      `ecomind-memory-${noteId}.md`
+    );
+  };
 
   const pollNoteUntilDone = (noteId: number) => {
-    if (pollIntervalRef.current) {
-      clearInterval(pollIntervalRef.current);
-    }
-
+    if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
     setProcessingNoteId(noteId);
 
     pollIntervalRef.current = window.setInterval(async () => {
       try {
-        const res = await fetch(
-          `http://127.0.0.1:8000/api/v1/voice-notes/${noteId}`
-        );
+        const res = await fetch(`${API_BASE}/api/v1/voice-notes/${noteId}`);
         if (!res.ok) return;
-
         const note: VoiceNote = await res.json();
 
-        // Update the note in the list
         setMemories((prev) =>
           prev.map((m) => (m.id === noteId ? { ...m, ...note } : m))
         );
@@ -137,8 +145,6 @@ function App() {
               note.error_message || "Processing failed. Please try again."
             );
           }
-
-          // Final refresh to stay in sync
           fetchMemories();
         }
       } catch (err) {
@@ -147,27 +153,19 @@ function App() {
     }, 1500);
   };
 
-  // Cleanup poll on unmount
   useEffect(() => {
     return () => {
-      if (pollIntervalRef.current) {
-        clearInterval(pollIntervalRef.current);
-      }
+      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
     };
   }, []);
-
-  // --------------------------------------------------
-  // DELETE MEMORY
-  // --------------------------------------------------
 
   const deleteMemory = async (memoryId: number) => {
     try {
       const response = await fetch(
-        `http://127.0.0.1:8000/api/v1/voice-notes/${memoryId}`,
+        `${API_BASE}/api/v1/voice-notes/${memoryId}`,
         { method: "DELETE" }
       );
       if (!response.ok) throw new Error("Failed to delete memory");
-
       setMemories((current) => current.filter((m) => m.id !== memoryId));
       if (selectedMemory?.id === memoryId) setSelectedMemory(null);
       setMemoryToDelete(null);
@@ -177,22 +175,13 @@ function App() {
     }
   };
 
-  // --------------------------------------------------
-  // LOAD MEMORIES WHEN APP STARTS
-  // --------------------------------------------------
-
   useEffect(() => {
     const timer = setTimeout(() => fetchMemories(), 0);
     return () => clearTimeout(timer);
   }, []);
 
-  // --------------------------------------------------
-  // FILTER MEMORIES
-  // --------------------------------------------------
-
   const filteredMemories = memories.filter((memory) => {
     const searchText = searchQuery.toLowerCase().trim();
-
     const matchesSearch =
       searchText === "" ||
       memory.summary?.toLowerCase().includes(searchText) ||
@@ -201,16 +190,10 @@ function App() {
       memory.tasks?.some((t) => t.toLowerCase().includes(searchText)) ||
       memory.ideas?.some((i) => i.toLowerCase().includes(searchText)) ||
       memory.projects?.some((p) => p.toLowerCase().includes(searchText));
-
     const matchesTasks =
       !showTasksOnly || (memory.tasks && memory.tasks.length > 0);
-
     return matchesSearch && matchesTasks;
   });
-
-  // --------------------------------------------------
-  // VOICE BLOOM ANIMATION
-  // --------------------------------------------------
 
   useEffect(() => {
     const frame = (time: number) => {
@@ -221,7 +204,6 @@ function App() {
       for (let i = 0; i < PETAL_COUNT; i++) {
         const petal = petalRefs.current[i];
         if (!petal) continue;
-
         const angle = (360 / PETAL_COUNT) * i;
         let level: number;
 
@@ -241,7 +223,6 @@ function App() {
         const extra = analyser ? level * 46 : level * IDLE_AMPLITUDE * 4;
         const length = REST_LENGTH + extra;
         const glow = analyser ? 0.35 + level * 0.65 : 0.3;
-
         petal.style.transform = `
           rotate(${angle}deg)
           translateY(${BASE_RADIUS}px)
@@ -260,7 +241,6 @@ function App() {
       if (ringRef.current) {
         ringRef.current.style.transform = `rotate(${rotationRef.current}deg)`;
       }
-
       if (coreRef.current) {
         const pulse = analyser
           ? 1 + averageLevel * 0.12
@@ -271,19 +251,13 @@ function App() {
           String(analyser ? 0.4 + averageLevel * 0.9 : 0.25)
         );
       }
-
       rafRef.current = requestAnimationFrame(frame);
     };
-
     rafRef.current = requestAnimationFrame(frame);
     return () => {
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
     };
   }, []);
-
-  // --------------------------------------------------
-  // START RECORDING
-  // --------------------------------------------------
 
   const startRecording = async () => {
     try {
@@ -295,7 +269,6 @@ function App() {
       analyser.fftSize = 128;
       analyser.smoothingTimeConstant = 0.75;
       source.connect(analyser);
-
       audioContextRef.current = audioContext;
       analyserRef.current = analyser;
       dataArrayRef.current = new Uint8Array(analyser.frequencyBinCount);
@@ -303,26 +276,21 @@ function App() {
       const mediaRecorder = new MediaRecorder(stream);
       mediaRecorderRef.current = mediaRecorder;
       audioChunksRef.current = [];
-
       mediaRecorder.ondataavailable = (event) => {
         if (event.data.size > 0) audioChunksRef.current.push(event.data);
       };
-
       mediaRecorder.onstop = () => {
         const audioBlob = new Blob(audioChunksRef.current, {
           type: "audio/webm",
         });
-        const url = URL.createObjectURL(audioBlob);
-        setAudioUrl(url);
+        setAudioUrl(URL.createObjectURL(audioBlob));
         stream.getTracks().forEach((track) => track.stop());
       };
-
       mediaRecorder.start();
       setIsRecording(true);
       setRecordingTime(0);
       setTranscription(null);
       setSummary(null);
-
       timerRef.current = window.setInterval(() => {
         setRecordingTime((t) => t + 1);
       }, 1000);
@@ -333,10 +301,6 @@ function App() {
       );
     }
   };
-
-  // --------------------------------------------------
-  // STOP RECORDING
-  // --------------------------------------------------
 
   const stopRecording = () => {
     if (mediaRecorderRef.current) mediaRecorderRef.current.stop();
@@ -353,20 +317,13 @@ function App() {
     dataArrayRef.current = null;
   };
 
-  // --------------------------------------------------
-  // UPLOAD AND PROCESS RECORDING (async + poll)
-  // --------------------------------------------------
-
   const uploadRecording = async () => {
     if (!audioUrl) return;
-
     try {
       setIsUploading(true);
       setErrorMessage(null);
-
       const response = await fetch(audioUrl);
       const audioBlob = await response.blob();
-
       const formData = new FormData();
       formData.append(
         "audio",
@@ -375,25 +332,15 @@ function App() {
       );
       formData.append("language", language);
 
-      const uploadResponse = await fetch(
-        "http://127.0.0.1:8000/api/v1/voice-notes/upload",
-        { method: "POST", body: formData }
-      );
-
+      const uploadResponse = await fetch(`${API_BASE}/api/v1/voice-notes/upload`, {
+        method: "POST",
+        body: formData,
+      });
       if (!uploadResponse.ok) throw new Error("Upload failed");
-
       const result = await uploadResponse.json();
-      console.log("Upload accepted:", result);
-
-      // Immediately show the pending note in the list
       await fetchMemories();
-
-      // Start polling until processing finishes
-      if (result.id) {
-        pollNoteUntilDone(result.id);
-      } else {
-        setIsUploading(false);
-      }
+      if (result.id) pollNoteUntilDone(result.id);
+      else setIsUploading(false);
     } catch (error) {
       console.error("Upload error:", error);
       setErrorMessage(
@@ -403,10 +350,6 @@ function App() {
     }
   };
 
-  // --------------------------------------------------
-  // DELETE RECORDING
-  // --------------------------------------------------
-
   const deleteRecording = () => {
     if (audioUrl) URL.revokeObjectURL(audioUrl);
     setAudioUrl(null);
@@ -414,10 +357,6 @@ function App() {
     setSummary(null);
     setRecordingTime(0);
   };
-
-  // --------------------------------------------------
-  // FORMAT TIME
-  // --------------------------------------------------
 
   const formatTime = (seconds: number) => {
     const minutes = Math.floor(seconds / 60);
@@ -429,10 +368,6 @@ function App() {
 
   const isProcessing = (memory: VoiceNote) =>
     memory.status === "pending" || memory.status === "processing";
-
-  // --------------------------------------------------
-  // RENDER
-  // --------------------------------------------------
 
   return (
     <div className="app">
@@ -482,7 +417,6 @@ function App() {
                   />
                 ))}
               </div>
-
               <button
                 type="button"
                 className={`core ${isRecording ? "core--recording" : ""}`}
@@ -494,7 +428,6 @@ function App() {
                 {isRecording ? <Square size={26} /> : <Mic size={30} />}
               </button>
             </div>
-
             <div className="timer">{formatTime(recordingTime)}</div>
             <p className="status-label">
               {isRecording
@@ -525,11 +458,9 @@ function App() {
                   {formatTime(recordingTime)}
                 </span>
               </div>
-
               <div className="audio-well">
                 <audio controls src={audioUrl} />
               </div>
-
               <div className="result-actions">
                 <button
                   className="btn btn--primary"
@@ -539,21 +470,17 @@ function App() {
                   {isUploading ? (
                     <>
                       <Loader2 size={18} className="spin" />
-                      {processingNoteId
-                        ? "Processing with AI…"
-                        : "Saving…"}
+                      {processingNoteId ? "Processing with AI…" : "Saving…"}
                     </>
                   ) : (
                     "Save to EcoMind"
                   )}
                 </button>
-
                 <button className="btn btn--ghost" onClick={deleteRecording}>
                   <Trash2 size={16} />
                   Discard
                 </button>
               </div>
-
               {transcription && (
                 <div className="transcript">
                   <div className="transcript__label">
@@ -563,7 +490,6 @@ function App() {
                   <p>{transcription}</p>
                 </div>
               )}
-
               {summary && (
                 <div className="transcript">
                   <div className="transcript__label">
@@ -577,17 +503,27 @@ function App() {
           )}
         </div>
 
-        {/* MEMORY LIBRARY */}
         <section className="memory-library">
           <div className="memory-library__header">
             <div>
               <p className="eyebrow">Your memories</p>
               <h2>Memory Library</h2>
             </div>
-            <span className="memory-count">
-              {memories.length}{" "}
-              {memories.length === 1 ? "memory" : "memories"}
-            </span>
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <button
+                type="button"
+                className="tasks-button"
+                onClick={exportAllMarkdown}
+                title="Export all memories as Markdown"
+              >
+                <Download size={14} style={{ marginRight: 6, verticalAlign: "middle" }} />
+                Export MD
+              </button>
+              <span className="memory-count">
+                {memories.length}{" "}
+                {memories.length === 1 ? "memory" : "memories"}
+              </span>
+            </div>
           </div>
 
           <div className="memory-toolbar">
@@ -643,27 +579,23 @@ function App() {
                   role="button"
                   tabIndex={0}
                   onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      setSelectedMemory(memory);
-                    }
+                    if (e.key === "Enter" || e.key === " ") setSelectedMemory(memory);
                   }}
                 >
                   <div className="memory-card__top">
                     <div className="memory-card__meta">
                       <span className="memory-card__date">
-                        {new Date(memory.created_at).toLocaleDateString(
-                          "en-US",
-                          { month: "short", day: "numeric", year: "numeric" }
-                        )}
+                        {new Date(memory.created_at).toLocaleDateString("en-US", {
+                          month: "short",
+                          day: "numeric",
+                          year: "numeric",
+                        })}
                       </span>
                       <span className="memory-card__language">
                         {(memory.language || "en").toUpperCase()}
                       </span>
                       {isProcessing(memory) && (
-                        <span
-                          className="memory-card__language"
-                          style={{ opacity: 0.7 }}
-                        >
+                        <span className="memory-card__language" style={{ opacity: 0.7 }}>
                           PROCESSING
                         </span>
                       )}
@@ -676,7 +608,6 @@ function App() {
                         setMemoryToDelete(memory);
                       }}
                       aria-label="Delete memory"
-                      title="Delete memory"
                     >
                       <Trash2 size={16} />
                     </button>
@@ -696,9 +627,7 @@ function App() {
                   {!isProcessing(memory) && memory.topics && memory.topics.length > 0 && (
                     <div className="memory-card__topics">
                       {memory.topics.map((topic) => (
-                        <span key={topic} className="topic-pill">
-                          {topic}
-                        </span>
+                        <span key={topic} className="topic-pill">{topic}</span>
                       ))}
                     </div>
                   )}
@@ -730,9 +659,7 @@ function App() {
                       <p className="memory-card__section-label">PEOPLE</p>
                       <div className="memory-card__chips">
                         {memory.people.map((person) => (
-                          <span key={person} className="memory-chip">
-                            {person}
-                          </span>
+                          <span key={person} className="memory-chip">{person}</span>
                         ))}
                       </div>
                     </div>
@@ -743,10 +670,7 @@ function App() {
                       <p className="memory-card__section-label">PROJECTS</p>
                       <div className="memory-card__chips">
                         {memory.projects.map((project) => (
-                          <span
-                            key={project}
-                            className="memory-chip memory-chip--project"
-                          >
+                          <span key={project} className="memory-chip memory-chip--project">
                             {project}
                           </span>
                         ))}
@@ -774,12 +698,8 @@ function App() {
         </p>
       </main>
 
-      {/* MEMORY MODAL */}
       {selectedMemory && (
-        <div
-          className="memory-modal"
-          onClick={() => setSelectedMemory(null)}
-        >
+        <div className="memory-modal" onClick={() => setSelectedMemory(null)}>
           <div
             className="memory-modal__content"
             onClick={(e) => e.stopPropagation()}
@@ -795,10 +715,11 @@ function App() {
 
             <div className="memory-modal__meta">
               <span>
-                {new Date(selectedMemory.created_at).toLocaleDateString(
-                  "en-US",
-                  { month: "long", day: "numeric", year: "numeric" }
-                )}
+                {new Date(selectedMemory.created_at).toLocaleDateString("en-US", {
+                  month: "long",
+                  day: "numeric",
+                  year: "numeric",
+                })}
               </span>
               <span>{(selectedMemory.language || "en").toUpperCase()}</span>
             </div>
@@ -815,9 +736,7 @@ function App() {
                 <p className="memory-modal__label">TOPICS</p>
                 <div className="memory-card__topics">
                   {selectedMemory.topics.map((topic) => (
-                    <span key={topic} className="topic-pill">
-                      {topic}
-                    </span>
+                    <span key={topic} className="topic-pill">{topic}</span>
                   ))}
                 </div>
               </div>
@@ -850,9 +769,7 @@ function App() {
                 <p className="memory-modal__label">PEOPLE</p>
                 <div className="memory-card__chips">
                   {selectedMemory.people.map((person) => (
-                    <span key={person} className="memory-chip">
-                      {person}
-                    </span>
+                    <span key={person} className="memory-chip">{person}</span>
                   ))}
                 </div>
               </div>
@@ -863,10 +780,7 @@ function App() {
                 <p className="memory-modal__label">PROJECTS</p>
                 <div className="memory-card__chips">
                   {selectedMemory.projects.map((project) => (
-                    <span
-                      key={project}
-                      className="memory-chip memory-chip--project"
-                    >
+                    <span key={project} className="memory-chip memory-chip--project">
                       {project}
                     </span>
                   ))}
@@ -881,19 +795,30 @@ function App() {
               </div>
             )}
 
-            <button
-              type="button"
-              className="btn btn--danger"
-              onClick={() => setMemoryToDelete(selectedMemory)}
-            >
-              <Trash2 size={16} />
-              Delete memory
-            </button>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+              {!isProcessing(selectedMemory) && (
+                <button
+                  type="button"
+                  className="btn btn--ghost"
+                  onClick={() => exportNoteMarkdown(selectedMemory.id)}
+                >
+                  <Download size={16} />
+                  Export Markdown
+                </button>
+              )}
+              <button
+                type="button"
+                className="btn btn--danger"
+                onClick={() => setMemoryToDelete(selectedMemory)}
+              >
+                <Trash2 size={16} />
+                Delete memory
+              </button>
+            </div>
           </div>
         </div>
       )}
 
-      {/* DELETE CONFIRMATION */}
       {memoryToDelete && (
         <div
           className="delete-confirm-overlay"
