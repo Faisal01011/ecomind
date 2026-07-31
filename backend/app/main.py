@@ -1,6 +1,5 @@
 import json
 import time
-
 from pathlib import Path
 from uuid import uuid4
 
@@ -177,9 +176,7 @@ def get_voice_notes(
 ):
     notes = (
         db.query(models.VoiceNote)
-        .order_by(
-            models.VoiceNote.created_at.desc()
-        )
+        .order_by(models.VoiceNote.created_at.desc())
         .all()
     )
 
@@ -194,80 +191,20 @@ def get_voice_notes(
                 "language": note.language,
                 "transcription": note.transcription,
                 "summary": note.summary,
-
-                "topics": json.loads(
-                    note.topics or "[]"
-                ),
-
-                "ideas": json.loads(
-                    note.ideas or "[]"
-                ),
-
-                "tasks": json.loads(
-                    note.tasks or "[]"
-                ),
-
-                "people": json.loads(
-                    note.people or "[]"
-                ),
-
-                "projects": json.loads(
-                    note.projects or "[]"
-                ),
-
+                "topics": json.loads(note.topics or "[]"),
+                "ideas": json.loads(note.ideas or "[]"),
+                "tasks": json.loads(note.tasks or "[]"),
+                "people": json.loads(note.people or "[]"),
+                "projects": json.loads(note.projects or "[]"),
                 "created_at": note.created_at,
             }
         )
 
+    print(f"📚 Returning {len(results)} memories")
     return results
-    notes = (
-        db.query(models.VoiceNote)
-        .order_by(
-            models.VoiceNote.created_at.desc()
-        )
-        .all()
-    )
 
-    results = []
 
-    for note in notes:
-        results.append(
-            {
-                "id": note.id,
-                "filename": note.filename,
-                "audio_path": note.audio_path,
-                "language": note.language,
-                "transcription": note.transcription,
-                "summary": note.summary,
-
-                "topics": json.loads(
-                    note.topics or "[]"
-                ),
-
-                "ideas": json.loads(
-                    note.ideas or "[]"
-                ),
-
-                "tasks": json.loads(
-                    note.tasks or "[]"
-                ),
-
-                "people": json.loads(
-                    note.people or "[]"
-                ),
-
-                "projects": json.loads(
-                    note.projects or "[]"
-                ),
-
-                "created_at": note.created_at,
-            }
-        )
-
-    print(
-        f"📚 Returning {len(results)} memories"
-    )
-    # --------------------------------------------------
+# --------------------------------------------------
 # DELETE A VOICE NOTE
 # --------------------------------------------------
 
@@ -288,6 +225,16 @@ def delete_voice_note(
             "message": "Memory not found",
         }
 
+    # Clean up the audio file from disk if it exists
+    if note.audio_path:
+        audio_file = Path(note.audio_path)
+        if audio_file.exists():
+            try:
+                audio_file.unlink()
+                print(f"🗑️ Deleted audio file: {note.audio_path}")
+            except OSError as e:
+                print(f"⚠️ Failed to delete audio file {note.audio_path}: {e}")
+
     db.delete(note)
     db.commit()
 
@@ -296,5 +243,3 @@ def delete_voice_note(
         "message": "Memory deleted successfully",
         "id": note_id,
     }
-
-    return results
