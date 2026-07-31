@@ -2,12 +2,12 @@ import time
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import Depends, FastAPI, File, Form, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
 from app import models
-from app.database import Base, engine, get_db
+from app.database import Base, SessionLocal, engine, get_db
 from app.memory_processor import process_memory
 from app.transcription import transcribe_audio
 
@@ -19,7 +19,7 @@ from app.transcription import transcribe_audio
 app = FastAPI(
     title="EcoMind API",
     description="Personal voice memory system powered by AI",
-    version="0.1.0",
+    version="0.2.0",
 )
 
 
@@ -54,6 +54,84 @@ UPLOAD_DIR = Path("uploads")
 UPLOAD_DIR.mkdir(exist_ok=True)
 
 
+def serialize_note(note: models.VoiceNote) -> dict:
+    """Convert a VoiceNote ORM object into an API response dict."""
+    return {
+        "id": note.id,
+        "filename": note.filename,
+        "audio_path": note.audio_path,
+        "language": note.language,
+        "status": note.status,
+        "error_message": note.error_message,
+        "transcription": note.transcription,
+        "summary": note.summary,
+        "topics": note.topics or [],
+        "ideas": note.ideas or [],
+        "tasks": note.tasks or [],
+        "people": note.people or [],
+        "projects": note.projects or [],
+        "created_at": note.created_at,
+        "updated_at": note.updated_at,
+    }
+
+
+def process_voice_note_background(note_id: int, audio_path: str, language: str):
+    """
+    Background worker that runs Whisper + Ollama and updates the DB record.
+    Uses its own DB session because the request session is already closed.
+    """
+    db = SessionLocal()
+    try:
+        note = db.query(models.VoiceNote).filter(models.VoiceNote.id == note_id).first()
+        if not note:
+            return
+
+        note.status = "processing"
+        db.commit()
+
+        print("\n====================================")
+        print(f"🌱 Background processing started for note #{note_id}")
+        print(f"📁 Audio file: {audio_path}")
+        print(f"🌍 Language: {language}")
+
+        # 1. Transcribe
+        transcription_start = time.time()
+        transcript = transcribe_audio(audio_path, language)
+        print(f"🎙️ Transcription completed in {time.time() - transcription_start:.2f}s")
+        print(f"📝 Transcript length: {len(transcript)} characters")
+
+        # 2. Analyze with LLM
+        memory = process_memory(transcript)
+
+        # 3. Persist results
+        note.transcription = transcript
+        note.summary = memory.get("summary", "AI analysis unavailable")
+        note.topics = memory.get("topics", [])
+        note.ideas = memory.get("ideas", [])
+        note.tasks = memory.get("tasks", [])
+        note.people = memory.get("people", [])
+        note.projects = memory.get("projects", [])
+        note.status = "completed"
+        note.error_message = None
+        db.commit()
+
+        print(f"✅ Note #{note_id} processed successfully")
+        print("====================================\n")
+
+    except Exception as e:
+        print(f"❌ Background processing failed for note #{note_id}: {e}")
+        try:
+            note = db.query(models.VoiceNote).filter(models.VoiceNote.id == note_id).first()
+            if note:
+                note.status = "failed"
+                note.error_message = str(e)
+                db.commit()
+        except Exception:
+            pass
+    finally:
+        db.close()
+
+
 # --------------------------------------------------
 # ROOT ENDPOINT
 # --------------------------------------------------
@@ -63,7 +141,7 @@ def root():
     return {
         "app": "EcoMind",
         "status": "online",
-        "version": "0.1.0",
+        "version": "0.2.0",
     }
 
 
@@ -77,91 +155,58 @@ def health_check():
 
 
 # --------------------------------------------------
-# UPLOAD, TRANSCRIBE, ANALYZE, AND SAVE
+# UPLOAD (returns immediately, processing is async)
 # --------------------------------------------------
 
 @app.post("/api/v1/voice-notes/upload")
 async def upload_voice_note(
+    background_tasks: BackgroundTasks,
     audio: UploadFile = File(...),
     language: str = Form("auto"),
     db: Session = Depends(get_db),
 ):
-    total_start_time = time.time()
-
-    # 1. Generate a unique ID
+    # 1. Generate a unique ID for the file
     file_id = str(uuid4())
-
-    # 2. Determine file extension
     file_extension = Path(audio.filename or "recording.webm").suffix
-
-    # 3. Create file path
     file_path = UPLOAD_DIR / f"{file_id}{file_extension}"
 
-    # 4. Read uploaded audio
+    # 2. Save audio to disk
     file_content = await audio.read()
+    with open(file_path, "wb") as f:
+        f.write(file_content)
 
-    # 5. Save audio file
-    with open(file_path, "wb") as file:
-        file.write(file_content)
-
-    print("\n====================================")
-    print("🌱 EcoMind processing started")
-    print(f"📁 Audio file: {audio.filename}")
-    print(f"🌍 Language: {language}")
-
-    # 6. Transcribe audio
-    transcription_start_time = time.time()
-    transcript = transcribe_audio(str(file_path), language)
-    transcription_time = time.time() - transcription_start_time
-
-    print(f"🎙️ Transcription completed in {transcription_time:.2f} seconds")
-    print(f"📝 Transcript length: {len(transcript)} characters")
-
-    # 7. Analyze memory with Llama 3
-    memory = process_memory(transcript)
-
-    # 8. Create database record (JSONB columns accept lists directly)
+    # 3. Create a pending record immediately
     voice_note = models.VoiceNote(
-        filename=audio.filename,
+        filename=audio.filename or "recording.webm",
         audio_path=str(file_path),
-        transcription=transcript,
         language=language,
-        summary=memory.get("summary", "AI analysis unavailable"),
-        topics=memory.get("topics", []),
-        ideas=memory.get("ideas", []),
-        tasks=memory.get("tasks", []),
-        people=memory.get("people", []),
-        projects=memory.get("projects", []),
+        status="pending",
+        transcription=None,
+        summary=None,
+        topics=[],
+        ideas=[],
+        tasks=[],
+        people=[],
+        projects=[],
     )
-
-    # 9. Save to PostgreSQL
     db.add(voice_note)
     db.commit()
     db.refresh(voice_note)
 
-    total_time = time.time() - total_start_time
+    # 4. Kick off heavy work in the background
+    background_tasks.add_task(
+        process_voice_note_background,
+        voice_note.id,
+        str(file_path),
+        language,
+    )
 
-    print("💾 Database save completed")
-    print(f"⏱️ Total processing time: {total_time:.2f} seconds")
-    print("🌱 EcoMind processing completed")
-    print("====================================\n")
+    print(f"📤 Note #{voice_note.id} accepted — processing in background")
 
-    # 10. Return result
+    # 5. Return immediately so the client is not blocked
     return {
-        "id": voice_note.id,
-        "filename": voice_note.filename,
-        "language": voice_note.language,
-        "transcription": voice_note.transcription,
-        "summary": voice_note.summary,
-        "topics": voice_note.topics or [],
-        "ideas": voice_note.ideas or [],
-        "tasks": voice_note.tasks or [],
-        "people": voice_note.people or [],
-        "projects": voice_note.projects or [],
-        "created_at": voice_note.created_at,
-        "message": (
-            "Voice note uploaded, transcribed, analyzed, and saved successfully"
-        ),
+        **serialize_note(voice_note),
+        "message": "Voice note accepted. Processing started in the background.",
     }
 
 
@@ -170,37 +215,31 @@ async def upload_voice_note(
 # --------------------------------------------------
 
 @app.get("/api/v1/voice-notes")
-def get_voice_notes(
-    db: Session = Depends(get_db),
-):
+def get_voice_notes(db: Session = Depends(get_db)):
     notes = (
         db.query(models.VoiceNote)
         .order_by(models.VoiceNote.created_at.desc())
         .all()
     )
-
-    results = []
-
-    for note in notes:
-        results.append(
-            {
-                "id": note.id,
-                "filename": note.filename,
-                "audio_path": note.audio_path,
-                "language": note.language,
-                "transcription": note.transcription,
-                "summary": note.summary,
-                "topics": note.topics or [],
-                "ideas": note.ideas or [],
-                "tasks": note.tasks or [],
-                "people": note.people or [],
-                "projects": note.projects or [],
-                "created_at": note.created_at,
-            }
-        )
-
+    results = [serialize_note(note) for note in notes]
     print(f"📚 Returning {len(results)} memories")
     return results
+
+
+# --------------------------------------------------
+# GET SINGLE VOICE NOTE (for status polling)
+# --------------------------------------------------
+
+@app.get("/api/v1/voice-notes/{note_id}")
+def get_voice_note(note_id: int, db: Session = Depends(get_db)):
+    note = (
+        db.query(models.VoiceNote)
+        .filter(models.VoiceNote.id == note_id)
+        .first()
+    )
+    if not note:
+        return {"success": False, "message": "Memory not found"}
+    return serialize_note(note)
 
 
 # --------------------------------------------------
@@ -208,10 +247,7 @@ def get_voice_notes(
 # --------------------------------------------------
 
 @app.delete("/api/v1/voice-notes/{note_id}")
-def delete_voice_note(
-    note_id: int,
-    db: Session = Depends(get_db),
-):
+def delete_voice_note(note_id: int, db: Session = Depends(get_db)):
     note = (
         db.query(models.VoiceNote)
         .filter(models.VoiceNote.id == note_id)
