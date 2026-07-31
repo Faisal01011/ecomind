@@ -11,33 +11,50 @@ Everything runs locally: speech-to-text via **Faster-Whisper** and understanding
 - 🎙️ **In-browser voice recording** — record directly from the web app, no external tools needed
 - 📝 **Automatic transcription** — powered by [Faster-Whisper](https://github.com/SYSTRAN/faster-whisper), with GPU acceleration when available
 - 🌍 **Multi-language support** — auto-detect, English, Hindi, Punjabi, Arabic, Spanish, French, and German
-- 🧠 **AI memory extraction** — a local Llama 3 model (via [Ollama](https://ollama.com)) rewrites each note into a concise summary and pulls out:
-  - Topics discussed
-  - Ideas, thoughts, and plans
-  - Actionable tasks
-  - People mentioned
-  - Projects mentioned
+- 🧠 **AI memory extraction** — a local Llama 3 model (via [Ollama](https://ollama.com)) rewrites each note into a concise summary and pulls out topics, ideas, tasks, people, and projects
 - ⚡ **Async processing** — upload returns immediately; Whisper + LLM run in the background
+- 📄 **Markdown export** — single memory or full library (Obsidian / Notion friendly)
 - 🔎 **Search & filter** — search past memories and filter to show only notes containing tasks
-- 🗂️ **Persistent history** — every note is stored in PostgreSQL (JSONB for structured fields)
-- 🗑️ **Memory management** — review and delete saved notes (audio files are cleaned up too)
-- 🔒 **Fully local & private** — transcription and AI analysis both run on your own infrastructure
+- 🗂️ **Persistent history** — PostgreSQL with JSONB for structured fields
+- 🗑️ **Memory management** — delete notes and clean up audio files on disk
+- 🔒 **Fully local & private** — transcription and AI analysis stay on your machine
+
+---
+
+## 🏗️ Architecture & design decisions
+
+```
+Browser (React)
+    │  record audio (MediaRecorder)
+    ▼
+FastAPI
+    │  POST /upload → save file + create row (status=pending) → return immediately
+    │  BackgroundTask
+    ▼
+Whisper (local STT)  →  Ollama / Llama 3.2 3B (structured extraction)
+    │
+    ▼
+PostgreSQL (JSONB topics/tasks/… + status lifecycle)
+```
+
+### Why these choices?
+
+| Decision | Trade-off |
+|----------|-----------|
+| **Local Whisper + Ollama** | Privacy and offline use; slower than cloud APIs; quality depends on hardware (GPU helps a lot). |
+| **FastAPI `BackgroundTasks`** | Zero extra infra for async jobs; fine for a single-user app. Not durable across restarts — upgrade to Redis/ARQ when you need reliability at scale. |
+| **Status polling** | Simple for the frontend; WebSockets would be nicer for multi-user real-time. |
+| **JSONB columns** | Queryable structured metadata without a separate tags table; good enough until you need normalized relations or full-text search indexes. |
+| **Markdown export** | Portable second brain (Obsidian, Notion, plain files) without locking data in the app. |
+
+**Status lifecycle:** `pending` → `processing` → `completed` \| `failed`
 
 ---
 
 ## 🏗️ Tech Stack
 
-**Frontend**
-- React 19 + TypeScript
-- Vite
-- Lucide React (icons)
-- Native `MediaRecorder` API for in-browser audio capture
-
-**Backend**
-- FastAPI (Python) + BackgroundTasks for async jobs
-- SQLAlchemy + PostgreSQL (JSONB columns)
-- Faster-Whisper for speech-to-text
-- Ollama running `llama3.2:3b` for memory extraction
+**Frontend:** React 19 + TypeScript, Vite, Lucide React, MediaRecorder API  
+**Backend:** FastAPI, SQLAlchemy, PostgreSQL (JSONB), Faster-Whisper, Ollama (`llama3.2:3b`)
 
 ---
 
@@ -47,18 +64,14 @@ Everything runs locally: speech-to-text via **Faster-Whisper** and understanding
 ecomind/
 ├── backend/
 │   ├── app/
-│   │   ├── main.py               # FastAPI app & API routes
-│   │   ├── database.py           # SQLAlchemy engine/session setup
-│   │   ├── models.py             # VoiceNote ORM model
-│   │   ├── transcription.py      # Faster-Whisper transcription
-│   │   └── memory_processor.py   # Ollama/Llama 3 memory extraction
+│   │   ├── main.py               # API routes, background jobs, Markdown export
+│   │   ├── database.py
+│   │   ├── models.py
+│   │   ├── transcription.py
+│   │   └── memory_processor.py
 │   └── requirements.txt
-├── frontend/
-│   ├── src/
-│   │   ├── App.tsx               # Main application UI
-│   │   ├── main.tsx
-│   │   └── App.css
-│   └── package.json
+└── frontend/
+    └── src/App.tsx
 ```
 
 ---
@@ -67,127 +80,80 @@ ecomind/
 
 ### Prerequisites
 
-- Python 3.10+
-- Node.js 18+
-- PostgreSQL
-- [Ollama](https://ollama.com) installed locally, with the `llama3.2:3b` model pulled:
-  ```bash
-  ollama pull llama3.2:3b
-  ```
+- Python 3.10+, Node.js 18+, PostgreSQL
+- [Ollama](https://ollama.com) with `ollama pull llama3.2:3b`
 
-### 1. Clone the repository
-
-```bash
-git clone https://github.com/Faisal01011/ecomind.git
-cd ecomind
-```
-
-### 2. Backend setup
+### Backend
 
 ```bash
 cd backend
-python -m venv venv
-source venv/bin/activate   # On Windows: venv\Scripts\activate
-
+python -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Create a `.env` file in `backend/` with your database connection string:
+`.env`:
 
 ```env
 DATABASE_URL=postgresql://<user>:<password>@localhost:5432/ecomind
 ```
 
-> **Note on schema changes:** If you already have an existing `voice_notes` table from an older version, drop it (or recreate the database) so the new columns (`status`, `error_message`, `updated_at`, and JSONB fields) are created cleanly:
-> ```sql
-> DROP TABLE IF EXISTS voice_notes;
-> ```
+If upgrading from an older schema:
 
-Make sure Ollama is running in the background, then start the API server:
+```sql
+DROP TABLE IF EXISTS voice_notes;
+```
 
 ```bash
 uvicorn app.main:app --reload
 ```
 
-The backend will be available at `http://127.0.0.1:8000`.
-
-### 3. Frontend setup
+### Frontend
 
 ```bash
-cd frontend
-npm install
-npm run dev
+cd frontend && npm install && npm run dev
 ```
-
-The web app will be available at `http://localhost:5173`.
 
 ---
 
 ## 🔌 API Reference
 
-| Method | Endpoint                          | Description                                              |
-|--------|------------------------------------|------------------------------------------------------------|
-| GET    | `/`                                | API status check                                          |
-| GET    | `/health`                          | Health check                                               |
-| POST   | `/api/v1/voice-notes/upload`       | Upload audio → returns immediately (`status: pending`)    |
-| GET    | `/api/v1/voice-notes`              | Retrieve all saved voice notes                              |
-| GET    | `/api/v1/voice-notes/{note_id}`    | Get a single note (use for status polling)                  |
-| DELETE | `/api/v1/voice-notes/{note_id}`    | Delete a voice note + its audio file                        |
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/` | API status |
+| GET | `/health` | Health check |
+| POST | `/api/v1/voice-notes/upload` | Upload → `status: pending` (async) |
+| GET | `/api/v1/voice-notes` | List all notes |
+| GET | `/api/v1/voice-notes/{id}` | Single note (polling) |
+| GET | `/api/v1/voice-notes/{id}/export.md` | Export one note as Markdown |
+| GET | `/api/v1/voice-notes/export.md` | Export all completed notes as Markdown |
+| DELETE | `/api/v1/voice-notes/{id}` | Delete note + audio file |
 
-**Upload request** (`multipart/form-data`):
-
-| Field      | Type   | Description                                      |
-|------------|--------|---------------------------------------------------|
-| `audio`    | file   | The recorded audio file                            |
-| `language` | string | Language code (`auto`, `en`, `hi`, `pa`, `ar`, `es`, `fr`, `de`) |
-
-**Upload response (immediate):**
-
-```json
-{
-  "id": 1,
-  "filename": "recording.webm",
-  "language": "en",
-  "status": "pending",
-  "transcription": null,
-  "summary": null,
-  "topics": [],
-  "ideas": [],
-  "tasks": [],
-  "people": [],
-  "projects": [],
-  "created_at": "2026-07-31T12:00:00",
-  "message": "Voice note accepted. Processing started in the background."
-}
-```
-
-**Status lifecycle:** `pending` → `processing` → `completed` | `failed`
-
-Poll `GET /api/v1/voice-notes/{id}` until `status` is `completed` or `failed`.
+**Upload:** `multipart/form-data` with `audio` (file) and `language` (`auto`, `en`, `hi`, `pa`, …).
 
 ---
 
 ## 🗺️ Roadmap
 
-- [ ] Update frontend to poll for processing status + show progress
-- [ ] Add authentication for multi-user support
-- [ ] Export memories to Markdown / Notion / Obsidian
-- [ ] Tag-based navigation across topics, people, and projects
-- [ ] Proper job queue (Redis / ARQ) for production scale
+- [x] Async processing + status polling
+- [x] Markdown export
+- [ ] Clickable topic / person / project filters
+- [ ] Authentication for multi-user support
+- [ ] Durable job queue (Redis / ARQ)
+- [ ] Postgres full-text search
+- [ ] Docker Compose one-command setup
 - [ ] Deploy a hosted demo
 
 ---
 
 ## 🤝 Contributing
 
-Contributions, issues, and feature requests are welcome. Feel free to open an issue or submit a pull request.
+Issues and PRs welcome.
 
 ## 📄 License
 
-This project is currently unlicensed. Add a license file if you intend to open source this project publicly.
+Currently unlicensed — add a license if you open-source publicly.
 
 ## 👤 Author
 
-**Faisal Fayaz**
-- GitHub: [@Faisal01011](https://github.com/Faisal01011)
-- LinkedIn: [faisal-fayaz](https://linkedin.com/in/faisal-fayaz)
+**Faisal Fayaz**  
+GitHub: [@Faisal01011](https://github.com/Faisal01011) · LinkedIn: [faisal-fayaz](https://linkedin.com/in/faisal-fayaz)
