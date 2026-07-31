@@ -17,9 +17,10 @@ Everything runs locally: speech-to-text via **Faster-Whisper** and understanding
   - Actionable tasks
   - People mentioned
   - Projects mentioned
+- ⚡ **Async processing** — upload returns immediately; Whisper + LLM run in the background
 - 🔎 **Search & filter** — search past memories and filter to show only notes containing tasks
-- 🗂️ **Persistent history** — every note is stored in PostgreSQL with its transcript, AI summary, and extracted metadata
-- 🗑️ **Memory management** — review and delete saved notes from the UI
+- 🗂️ **Persistent history** — every note is stored in PostgreSQL (JSONB for structured fields)
+- 🗑️ **Memory management** — review and delete saved notes (audio files are cleaned up too)
 - 🔒 **Fully local & private** — transcription and AI analysis both run on your own infrastructure
 
 ---
@@ -33,8 +34,8 @@ Everything runs locally: speech-to-text via **Faster-Whisper** and understanding
 - Native `MediaRecorder` API for in-browser audio capture
 
 **Backend**
-- FastAPI (Python)
-- SQLAlchemy + PostgreSQL
+- FastAPI (Python) + BackgroundTasks for async jobs
+- SQLAlchemy + PostgreSQL (JSONB columns)
 - Faster-Whisper for speech-to-text
 - Ollama running `llama3.2:3b` for memory extraction
 
@@ -97,6 +98,11 @@ Create a `.env` file in `backend/` with your database connection string:
 DATABASE_URL=postgresql://<user>:<password>@localhost:5432/ecomind
 ```
 
+> **Note on schema changes:** If you already have an existing `voice_notes` table from an older version, drop it (or recreate the database) so the new columns (`status`, `error_message`, `updated_at`, and JSONB fields) are created cleanly:
+> ```sql
+> DROP TABLE IF EXISTS voice_notes;
+> ```
+
 Make sure Ollama is running in the background, then start the API server:
 
 ```bash
@@ -123,9 +129,10 @@ The web app will be available at `http://localhost:5173`.
 |--------|------------------------------------|------------------------------------------------------------|
 | GET    | `/`                                | API status check                                          |
 | GET    | `/health`                          | Health check                                               |
-| POST   | `/api/v1/voice-notes/upload`       | Upload an audio file for transcription and analysis        |
+| POST   | `/api/v1/voice-notes/upload`       | Upload audio → returns immediately (`status: pending`)    |
 | GET    | `/api/v1/voice-notes`              | Retrieve all saved voice notes                              |
-| DELETE | `/api/v1/voice-notes/{note_id}`    | Delete a voice note by ID                                   |
+| GET    | `/api/v1/voice-notes/{note_id}`    | Get a single note (use for status polling)                  |
+| DELETE | `/api/v1/voice-notes/{note_id}`    | Delete a voice note + its audio file                        |
 
 **Upload request** (`multipart/form-data`):
 
@@ -134,31 +141,39 @@ The web app will be available at `http://localhost:5173`.
 | `audio`    | file   | The recorded audio file                            |
 | `language` | string | Language code (`auto`, `en`, `hi`, `pa`, `ar`, `es`, `fr`, `de`) |
 
-**Response:**
+**Upload response (immediate):**
 
 ```json
 {
   "id": 1,
   "filename": "recording.webm",
   "language": "en",
-  "transcription": "...",
-  "summary": "...",
+  "status": "pending",
+  "transcription": null,
+  "summary": null,
   "topics": [],
   "ideas": [],
   "tasks": [],
   "people": [],
   "projects": [],
-  "created_at": "2026-07-23T12:00:00"
+  "created_at": "2026-07-31T12:00:00",
+  "message": "Voice note accepted. Processing started in the background."
 }
 ```
+
+**Status lifecycle:** `pending` → `processing` → `completed` | `failed`
+
+Poll `GET /api/v1/voice-notes/{id}` until `status` is `completed` or `failed`.
 
 ---
 
 ## 🗺️ Roadmap
 
+- [ ] Update frontend to poll for processing status + show progress
 - [ ] Add authentication for multi-user support
 - [ ] Export memories to Markdown / Notion / Obsidian
 - [ ] Tag-based navigation across topics, people, and projects
+- [ ] Proper job queue (Redis / ARQ) for production scale
 - [ ] Deploy a hosted demo
 
 ---
