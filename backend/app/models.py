@@ -19,9 +19,14 @@ class VoiceNote(Base):
 
     filename = Column(String, nullable=False)
     audio_path = Column(String, nullable=False)
-    transcription = Column(Text, nullable=False)
     language = Column(String(10), nullable=False)
 
+    # Processing lifecycle
+    # pending -> processing -> completed | failed
+    status = Column(String(20), nullable=False, default="pending", index=True)
+    error_message = Column(Text, nullable=True)
+
+    transcription = Column(Text, nullable=True)
     summary = Column(Text, nullable=True)
 
     # Structured extraction fields stored as native JSONB
@@ -32,3 +37,4 @@ class VoiceNote(Base):
     projects = Column(JSONB, nullable=True, default=list)
 
     created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
