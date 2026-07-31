@@ -1,4 +1,3 @@
-import json
 import time
 from pathlib import Path
 from uuid import uuid4
@@ -121,18 +120,18 @@ async def upload_voice_note(
     # 7. Analyze memory with Llama 3
     memory = process_memory(transcript)
 
-    # 8. Create database record
+    # 8. Create database record (JSONB columns accept lists directly)
     voice_note = models.VoiceNote(
         filename=audio.filename,
         audio_path=str(file_path),
         transcription=transcript,
         language=language,
         summary=memory.get("summary", "AI analysis unavailable"),
-        topics=json.dumps(memory.get("topics", [])),
-        ideas=json.dumps(memory.get("ideas", [])),
-        tasks=json.dumps(memory.get("tasks", [])),
-        people=json.dumps(memory.get("people", [])),
-        projects=json.dumps(memory.get("projects", [])),
+        topics=memory.get("topics", []),
+        ideas=memory.get("ideas", []),
+        tasks=memory.get("tasks", []),
+        people=memory.get("people", []),
+        projects=memory.get("projects", []),
     )
 
     # 9. Save to PostgreSQL
@@ -154,11 +153,11 @@ async def upload_voice_note(
         "language": voice_note.language,
         "transcription": voice_note.transcription,
         "summary": voice_note.summary,
-        "topics": json.loads(voice_note.topics or "[]"),
-        "ideas": json.loads(voice_note.ideas or "[]"),
-        "tasks": json.loads(voice_note.tasks or "[]"),
-        "people": json.loads(voice_note.people or "[]"),
-        "projects": json.loads(voice_note.projects or "[]"),
+        "topics": voice_note.topics or [],
+        "ideas": voice_note.ideas or [],
+        "tasks": voice_note.tasks or [],
+        "people": voice_note.people or [],
+        "projects": voice_note.projects or [],
         "created_at": voice_note.created_at,
         "message": (
             "Voice note uploaded, transcribed, analyzed, and saved successfully"
@@ -191,11 +190,11 @@ def get_voice_notes(
                 "language": note.language,
                 "transcription": note.transcription,
                 "summary": note.summary,
-                "topics": json.loads(note.topics or "[]"),
-                "ideas": json.loads(note.ideas or "[]"),
-                "tasks": json.loads(note.tasks or "[]"),
-                "people": json.loads(note.people or "[]"),
-                "projects": json.loads(note.projects or "[]"),
+                "topics": note.topics or [],
+                "ideas": note.ideas or [],
+                "tasks": note.tasks or [],
+                "people": note.people or [],
+                "projects": note.projects or [],
                 "created_at": note.created_at,
             }
         )
